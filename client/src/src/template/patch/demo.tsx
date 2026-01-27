@@ -388,8 +388,6 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
             const hex = getHexColorByValue(pageContext.current.vectorData.color)
             safeChangeMode(mode)
             applyVectorColorToDraw(hex)
-
-            pageContext.current.hasVector = true
         } else if (createVectorTab === 'upload') {
             if (!uploadFilePath || !uploadFilePath.trim()) {
                 toast.error("Please select a valid file path")
@@ -429,6 +427,7 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                 return
             }
         }
+        pageContext.current.hasVector = true
 
         triggerRepaint()
     }

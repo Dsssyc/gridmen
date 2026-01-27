@@ -357,8 +357,6 @@ export default function PatchCreation({ node, context }: PatchCreationProps) {
                 mountParamsString: JSON.stringify(patchData)
             })
 
-            console.log(JSON.stringify(patchData))
-
             clearMarkerByNodeKey(pageContext.current.schema!.schemaNodeKey)
             clearMapPatchBounds(map, node.key)
 

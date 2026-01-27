@@ -115,7 +115,7 @@ export default function CapacityBar({
             return (
                 <Database
                     className={cn(
-                        'h-5 w-5 transition-colors duration-300',
+                        'h-6 w-6 transition-colors duration-300',
                         colors.text
                     )}
                 />
@@ -124,7 +124,7 @@ export default function CapacityBar({
             return (
                 <DatabaseZap
                     className={cn(
-                        'h-5 w-5 transition-colors duration-300',
+                        'h-6 w-6 transition-colors duration-300',
                         colors.text
                     )}
                 />
@@ -133,7 +133,7 @@ export default function CapacityBar({
             return (
                 <AlertCircle
                     className={cn(
-                        'h-5 w-5 transition-colors duration-300',
+                        'h-6 w-6 transition-colors duration-300',
                         colors.text
                     )}
                 />
@@ -146,7 +146,7 @@ export default function CapacityBar({
             <TooltipProvider>
                 <Tooltip>
                     <TooltipTrigger asChild>
-                        <div className="p-2 w-[150px] bg-gray-700 rounded-md space-y-6">
+                        <div className="p-4 w-[180px] bg-gray-700 rounded-md space-y-6">
                             <div className={cn('flex items-center gap-3', className)}>
                                 <div className="flex-shrink-0 relative">
                                     {getIcon(displayPercentage)}
@@ -158,12 +158,12 @@ export default function CapacityBar({
                                     )}
                                 </div>
                                 <div className="flex-grow">
-                                    <div className="flex justify-between mb-1">
-                                        <span className="text-sm font-bold">
+                                    <div className="flex justify-between mb-2">
+                                        <span className="text-md font-bold">
                                             Capacity
                                         </span>
                                         <span
-                                            className={cn('text-sm font-medium transition-colors duration-300',
+                                            className={cn('text-md font-medium transition-colors duration-300',
                                                 getColorClass(displayPercentage).text)}
                                         >
                                             {displayPercentage}%

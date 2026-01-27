@@ -189,6 +189,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
     const [topologyLayer, setTopologyLayer] = useState<TopologyLayer | null>(null)
     const [checkSwitchOn, setCheckSwitchOn] = useState(false)
+    const [showDeletedGrid, setShowDeletedGrid] = useState(true)
     const [selectAllDialogOpen, setSelectAllDialogOpen] = useState(false)
     const [deleteSelectDialogOpen, setDeleteSelectDialogOpen] = useState(false)
     const [pickingTab, setPickingTab] = useState<boolean>(true)
@@ -726,6 +727,16 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         }
     }
 
+    const toggleShowDeletedGridSwitch = () => {
+        const newShowDeletedState = !showDeletedGrid
+
+        if (topologyLayer) {
+            topologyLayer.showDeletedCells = newShowDeletedState
+        }
+
+        setShowDeletedGrid(newShowDeletedState)
+    }
+
     const handleSaveTopologyState = () => {
         const core: PatchCore = pageContext.current.patchCore!
         core.save(() => {
@@ -768,27 +779,45 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                     </div>
                     <div className='text-sm w-full flex flex-row items-center justify-between space-x-2'>
                         <CapacityBar gridCore={pageContext.current.patchCore!} />
-                        <div
-                            className='bg-sky-500 hover:bg-sky-600 h-8 p-2 text-white cursor-pointer rounded-sm flex items-center px-4'
-                            onClick={toggleCheckSwitch}
-                        >
-                            <span>Check</span>
-                            <Separator orientation='vertical' className='h-4 mx-2' />
-                            <Switch
-                                className='data-[state=checked]:bg-amber-300 data-[state=unchecked]:bg-gray-300 cursor-pointer'
-                                checked={checkSwitchOn}
-                                onCheckedChange={toggleCheckSwitch}
-                            />
-                        </div>
+                        <div className='space-y-2'>
+                            <div className='flex flex-row items-center justify-between gap-2'>
+                                <div
+                                    className='bg-sky-500 hover:bg-sky-600 h-8 p-2 text-white cursor-pointer rounded-sm flex items-center px-4'
+                                    onClick={toggleCheckSwitch}
+                                >
+                                    <span>Check</span>
+                                    <Separator orientation='vertical' className='h-4 mx-2' />
+                                    <Switch
+                                        className='data-[state=checked]:bg-amber-300 data-[state=unchecked]:bg-gray-300 cursor-pointer'
+                                        checked={checkSwitchOn}
+                                        onCheckedChange={toggleCheckSwitch}
+                                    />
+                                </div>
 
-                        <Button
-                            className='bg-green-500 hover:bg-green-600 h-8 text-white cursor-pointer rounded-sm flex'
-                            onClick={handleSaveTopologyState}
-                        >
-                            <span>Save</span>
-                            <Separator orientation='vertical' className='h-4' />
-                            <Save className='w-4 h-4' />
-                        </Button>
+                                <Button
+                                    className='bg-green-500 hover:bg-green-600 h-8 text-white cursor-pointer rounded-sm flex'
+                                    onClick={handleSaveTopologyState}
+                                >
+                                    <span>Save</span>
+                                    <Separator orientation='vertical' className='h-4' />
+                                    <Save className='w-4 h-4' />
+                                </Button>
+                            </div>
+                            <div
+                                className='bg-orange-500 hover:bg-orange-600 h-8 p-2 text-white cursor-pointer rounded-sm flex items-center px-4'
+                                onClick={toggleShowDeletedGridSwitch}
+                            >
+                                <span className='shrink-0'>Show Deleted Grid</span>
+                                <Separator orientation='vertical' className='h-4 mx-2' />
+                                <div className='flex-1 flex justify-center'>
+                                    <Switch
+                                        className='data-[state=checked]:bg-sky-300 data-[state=unchecked]:bg-gray-300 cursor-pointer'
+                                        checked={showDeletedGrid}
+                                        onCheckedChange={toggleShowDeletedGridSwitch}
+                                    />
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
