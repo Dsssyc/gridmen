@@ -5,7 +5,7 @@ import SchemaCheck from "./schemaCheck"
 import { ITemplate } from "../iTemplate"
 import SchemaCreation from "./schemaCreation"
 import { IResourceNode } from "../scene/iscene"
-import { useLayerStore, useToolPanelStore } from '@/store/storeSet'
+import { useLayerStore, useSelectedNodeStore, useToolPanelStore } from '@/store/storeSet'
 import { IViewContext } from "@/views/IViewContext"
 import { ResourceNode, ResourceTree } from "../scene/scene"
 import { Delete, Edit3, FilePlusCorner, Info } from "lucide-react"
@@ -116,6 +116,7 @@ export default class SchemaTemplate implements ITemplate {
                     if (node.isTemp) {
                         (node as ResourceNode).tree.tempNodeExist = false
                         await (node.tree as ResourceTree).removeNode(node)
+                        useSelectedNodeStore.getState().setSelectedNodeKey('.')
                         await (node as ResourceNode).close()
                         toast.success(`Schema ${node.name} deleted successfully`)
                         return
@@ -123,6 +124,7 @@ export default class SchemaTemplate implements ITemplate {
 
                     await api.node.unmountNode(node.nodeInfo)
                     toast.success(`Schema ${node.name} deleted successfully`)
+                    useSelectedNodeStore.getState().setSelectedNodeKey('.')
                     await (node.tree as ResourceTree).refresh()
                 }
                 break

@@ -29,7 +29,7 @@ interface GridLayer {
 interface PageContext {
     name: string
     epsg: number | null
-    alignmentOrigin: [number, number]
+    alignmentOn4326: [number, number] | null
     alignmentConverted: [number, number] | null
     gridLayers: GridLayer[]
 }
@@ -211,8 +211,8 @@ export default function SchemaCreation({
     const pageContext = useRef<PageContext>({
         name: '',
         epsg: null,
-        alignmentOrigin: [0, 0],
-        alignmentConverted: null,
+        alignmentOn4326: null,
+        alignmentConverted: [0, 0],
         gridLayers: []
     })
 
@@ -283,39 +283,39 @@ export default function SchemaCreation({
 
     const handleSetEPSG = (e: React.ChangeEvent<HTMLInputElement>) => {
         pageContext.current.epsg = parseInt(e.target.value)
-        updateCoords()
+        // updateCoords()
         triggerRepaint()
     }
 
     const updateCoords = async () => {
-        const epsg = pageContext.current.epsg
-        const alignmentOrigin = pageContext.current.alignmentOrigin
+        if (!pageContext.current.epsg) return
 
-        if (alignmentOrigin[0] && alignmentOrigin[1] && epsg) {
-            if (epsg.toString().length < 4 || epsg < 1000 || epsg > 32767) {
+        if (pageContext.current.alignmentOn4326 && pageContext.current.epsg) {
+            if (pageContext.current.epsg.toString().length < 4 || pageContext.current.epsg < 1000 || pageContext.current.epsg > 32767) {
                 pageContext.current.alignmentConverted = null
             } else {
-                pageContext.current.alignmentConverted = await convertPointCoordinate(alignmentOrigin, 4326, epsg)
+                pageContext.current.alignmentConverted = await convertPointCoordinate(pageContext.current.alignmentOn4326!, 4326, pageContext.current.epsg)
             }
+        } else {
+            console.debug('alignmentOn4326 or epsg is null')
         }
 
         triggerRepaint()
     }
 
-    const handleSetAlignmentOriginLon = (e: React.ChangeEvent<HTMLInputElement>) => {
-        pageContext.current.alignmentOrigin[0] = parseFloat(e.target.value)
-        updateCoords()
+    const handleSetAlignmentLon = (e: React.ChangeEvent<HTMLInputElement>) => {
+        pageContext.current.alignmentConverted![0] = parseFloat(e.target.value)
+        // updateCoords()
         triggerRepaint()
     }
 
-    const handleSetAlignmentOriginLat = (e: React.ChangeEvent<HTMLInputElement>) => {
-        pageContext.current.alignmentOrigin[1] = parseFloat(e.target.value)
-        updateCoords()
+    const handleSetAlignmentLat = (e: React.ChangeEvent<HTMLInputElement>) => {
+        pageContext.current.alignmentConverted![1] = parseFloat(e.target.value)
+        // updateCoords()
         triggerRepaint()
     }
 
     const handlePickAlignmentOrigin = () => {
-        if (!map) return
 
         if (isSelectingPoint) {
             setIsSelectingPoint(false)
@@ -324,15 +324,14 @@ export default function SchemaCreation({
             return
         }
 
-        clearMarkerByNodeKey(node.key)
+        clearMarkerByNodeKey(node.nodeInfo)
         picking.current.marker = null
 
-        picking.current.cancel = pickCoordsFromMap(map, node.key, { color: '#FF0000' }, (marker) => {
+        picking.current.cancel = pickCoordsFromMap(map!, node.nodeInfo, { color: '#FF0000' }, (marker) => {
             picking.current.marker = marker
 
-            const pc = pageContext.current
             const bp = marker.getLngLat()
-            pc.alignmentOrigin = [bp.lng, bp.lat]
+            pageContext.current.alignmentOn4326 = [bp.lng, bp.lat]
             updateCoords()
             setIsSelectingPoint(false)
         })
@@ -340,10 +339,21 @@ export default function SchemaCreation({
         setIsSelectingPoint(true)
     }
 
-    const handleDrawAlignmentOrigin = () => {
-        if (!map || !pageContext.current.alignmentOrigin) return
-        clearMarkerByNodeKey(node.key)
-        addMapMarker(map, pageContext.current.alignmentOrigin, node.key)
+    const handleDrawAlignmentOrigin = async () => {
+        if (!pageContext.current.epsg) {
+            toast.error('Please set a valid EPSG code first')
+            return
+        }
+
+        if (!pageContext.current.alignmentConverted || !pageContext.current.alignmentConverted[0] || !pageContext.current.alignmentConverted[1]) {
+            toast.error('Please set valid alignment coordinates first')
+            return
+        }
+
+        clearMarkerByNodeKey(node.nodeInfo)
+
+        const alignmentOriginOn4326 = await convertPointCoordinate(pageContext.current.alignmentConverted, pageContext.current.epsg!, 4326)
+        addMapMarker(map!, alignmentOriginOn4326!, node.nodeInfo)
     }
 
     const handleAddGridLayer = () => {
@@ -384,8 +394,8 @@ export default function SchemaCreation({
         const validation = validateSchemaForm({
             name: pageContext.current.name,
             epsg: pageContext.current.epsg!,
-            lon: pageContext.current.alignmentOrigin[0].toString(),
-            lat: pageContext.current.alignmentOrigin[1].toString(),
+            lon: pageContext.current.alignmentConverted![0].toString(),
+            lat: pageContext.current.alignmentConverted![1].toString(),
             gridLayerInfos: pageContext.current.gridLayers,
         })
 
@@ -411,7 +421,7 @@ export default function SchemaCreation({
                 mountParamsString: JSON.stringify(schemaData)
             })
 
-            clearMarkerByNodeKey(node.key)
+            clearMarkerByNodeKey(node.nodeInfo)
 
             node.isTemp = false
                 ; (node as ResourceNode).tree.tempNodeExist = false
@@ -503,9 +513,10 @@ export default function SchemaCreation({
                     {/* ----------------------- */}
                     {/* Coordinates (EPSG:4326) */}
                     {/* ----------------------- */}
+                    {/* TODO：Draw由epsg转4326，Pick由4326转epsg */}
                     <div className='bg-white rounded-lg shadow-sm p-4 border border-gray-200'>
                         <h2 className='text-black text-lg font-semibold mb-2'>
-                            Coordinates (EPSG:4326)
+                            Alignment Coordinates
                         </h2>
                         <div className='flex flex-col lg:flex-row items-stretch gap-4'>
                             <div className='flex-1 flex flex-col text-black gap-3'>
@@ -517,8 +528,8 @@ export default function SchemaCreation({
                                         id='lon'
                                         type='number'
                                         step='0.000001'
-                                        value={pageContext.current.alignmentOrigin[0] || ''}
-                                        onChange={handleSetAlignmentOriginLon}
+                                        value={pageContext.current.alignmentConverted![0] || ''}
+                                        onChange={handleSetAlignmentLon}
                                         placeholder={'Enter longitude'}
                                         className={`border-gray-300 ${formErrors.coordinates ? 'border-red-500 focus:ring-red-500' : ''
                                             }`}
@@ -532,8 +543,8 @@ export default function SchemaCreation({
                                         id='lat'
                                         type='number'
                                         step='0.000001'
-                                        value={pageContext.current.alignmentOrigin[1] || ''}
-                                        onChange={handleSetAlignmentOriginLat}
+                                        value={pageContext.current.alignmentConverted![1] || ''}
+                                        onChange={handleSetAlignmentLat}
                                         placeholder={'Enter latitude'}
                                         className={`border-gray-300 ${formErrors.coordinates ? 'border-red-500 focus:ring-red-500' : ''
                                             }`}
@@ -547,7 +558,7 @@ export default function SchemaCreation({
                                 <Button
                                     type='button'
                                     onClick={handleDrawAlignmentOrigin}
-                                    disabled={!pageContext.current.alignmentOrigin[0] || !pageContext.current.alignmentOrigin[1]}
+                                    disabled={!pageContext.current.alignmentConverted || !pageContext.current.alignmentConverted[0] || !pageContext.current.alignmentConverted[1]}
                                     className={`w-20 h-15 shadow-sm bg-sky-500 hover:bg-sky-600 text-white cursor-pointer`}
                                 >
                                     <div className='flex flex-row gap-1 items-center'>
@@ -561,6 +572,7 @@ export default function SchemaCreation({
                                 <Button
                                     type='button'
                                     onClick={handlePickAlignmentOrigin}
+                                    disabled={!pageContext.current.epsg}
                                     className={`w-20 h-15 shadow-sm ${isSelectingPoint
                                         ? 'bg-red-500 hover:bg-red-600'
                                         : 'bg-blue-500 hover:bg-blue-600'
@@ -586,7 +598,7 @@ export default function SchemaCreation({
                     {/* --------------------- */}
                     {/* Converted Coordinates */}
                     {/* --------------------- */}
-                    {pageContext.current.alignmentConverted && pageContext.current.epsg !== 4326 &&
+                    {/* {pageContext.current.alignmentConverted && pageContext.current.epsg !== 4326 &&
                         <div className='bg-white rounded-lg shadow-sm p-4 border border-gray-200 text-black'>
                             <h2 className='text-lg font-semibold mb-2'>
                                 Converted Coordinate (EPSG:{pageContext.current.epsg ? pageContext.current.epsg.toString() : ''}
@@ -607,7 +619,7 @@ export default function SchemaCreation({
                                     </div>
                                 </div>
                             </div>
-                        </div>}
+                        </div>} */}
                     {/* ----------- */}
                     {/* Grid Layers */}
                     {/* ----------- */}

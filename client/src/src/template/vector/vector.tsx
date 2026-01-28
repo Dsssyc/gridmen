@@ -7,7 +7,7 @@ import VectorEdit from "./vectorEdit"
 import { ContextMenuContent, ContextMenuItem } from '@/components/ui/context-menu'
 import { Delete, Edit3, FilePlusCorner, Info } from "lucide-react";
 import { ResourceNode, ResourceTree } from "../scene/scene";
-import { useLayerStore, useToolPanelStore } from "@/store/storeSet"
+import { useLayerStore, useSelectedNodeStore, useToolPanelStore } from "@/store/storeSet"
 import * as api from '../api/apis'
 import { linkNode } from "../api/node";
 import { toast } from "sonner";
@@ -103,12 +103,16 @@ export default class VectorTemplate implements ITemplate {
                     if (node.isTemp) {
                         ; (node as ResourceNode).tree.tempNodeExist = false
                         await (node.tree as ResourceTree).removeNode(node)
+                        useSelectedNodeStore.getState().setSelectedNodeKey('.')
+                        await (node as ResourceNode).close()
                         toast.success(`Vector ${node.name} deleted successfully`)
                         return
                     }
 
                     await api.node.unmountNode(node.key)
                     toast.success(`Vector ${node.name} deleted successfully`)
+                    useSelectedNodeStore.getState().setSelectedNodeKey('.')
+                    await (node as ResourceNode).close()
                     await (node.tree as ResourceTree).refresh()
                 }
                 break

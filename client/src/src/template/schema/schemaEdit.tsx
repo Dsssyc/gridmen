@@ -175,7 +175,7 @@ export default function SchemaEdit({ node, context }: SchemaEditProps) {
                     {/* ----------------------- */}
                     <div className='bg-white rounded-lg shadow-sm p-4 border border-gray-200 text-black'>
                         <h2 className='text-lg font-semibold mb-2'>
-                            Coordinate (EPSG:{pageContext.current?.epsg ?? ''})
+                            Alignment Coordinates
                         </h2>
                         <div className='flex-1 flex flex-col justify-between'>
                             <div className='flex items-center gap-2 mb-2 '>

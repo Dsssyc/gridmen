@@ -807,7 +807,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                 className='bg-orange-500 hover:bg-orange-600 h-8 p-2 text-white cursor-pointer rounded-sm flex items-center px-4'
                                 onClick={toggleShowDeletedGridSwitch}
                             >
-                                <span className='shrink-0'>Show Deleted Grid</span>
+                                <span className='shrink-0'>Show Deleted Cells</span>
                                 <Separator orientation='vertical' className='h-4 mx-2' />
                                 <div className='flex-1 flex justify-center'>
                                     <Switch
