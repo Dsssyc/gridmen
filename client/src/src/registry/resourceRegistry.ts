@@ -18,13 +18,13 @@ export const RESOURCE_REGISTRY: ResourceEntry[] = [
         icon: Square,
     },
     {
-        value: "grid",
-        label: "Grid",
-        icon: SquaresUnite,
-    },
-    {
         value: "vector",
         label: "Vector",
         icon: SplinePointer,
+    },
+    {
+        value: "grid",
+        label: "Grid",
+        icon: SquaresUnite,
     },
 ]

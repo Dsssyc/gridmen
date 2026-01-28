@@ -173,7 +173,7 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
                         </AvatarFallback>
                     </Avatar>
                     <h1 className='font-bold text-[25px] relative flex items-center'>
-                        Check Patch Topology
+                        Check Patch Cells
                         <span className=" bg-[#D63F26] rounded px-0.5 mb-2 text-[12px] inline-flex items-center mx-1">WorkSpace</span>
                     </h1>
                 </div>

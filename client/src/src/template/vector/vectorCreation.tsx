@@ -10,7 +10,10 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { vectorColorMap } from '@/utils/utils'
-import { ResourceNode } from '../scene/scene'
+import { ResourceNode, ResourceTree } from '../scene/scene'
+import { toast } from 'sonner'
+import * as api from '../api/apis'
+import { useLayerGroupStore, useToolPanelStore } from '@/store/storeSet'
 
 interface VectorCreationProps {
     node: IResourceNode
@@ -26,7 +29,7 @@ interface PageContext {
         epsg: string
         color: string
     }
-    demFilePath: string | null
+    vectorFilePath: string | null
     sessionId: string | null
     createdVectorIds: Set<string>
 }
@@ -49,7 +52,7 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
             color: "sky-500"
 
         },
-        demFilePath: null,
+        vectorFilePath: null,
         sessionId: null,
         createdVectorIds: new Set<string>(),
     })
@@ -79,6 +82,60 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
     const unloadContext = () => {
 
         return
+    }
+
+    const handleUploadVectorFilePath = async () => {
+        try {
+            const selectedPath = await window.electronAPI?.openFileDialog?.()
+            pageContext.current.vectorFilePath = selectedPath!
+        } catch (error) {
+            toast.error('Failed to select file path: ' + (error as Error).message)
+        }
+        triggerRepaint()
+    }
+
+    const handleClickConfirm = async () => {
+        if (createVectorTab === "draw") {
+            toast.info('暂时还没写')
+            console.log("Draw vector of type:", pendingType)
+        } else if (createVectorTab === "upload") {
+            if (!pageContext.current.vectorFilePath) {
+                toast.error('Please select a shapefile path before creating the vector.')
+                return
+            }
+
+            const vectorFilePath = pageContext.current.vectorFilePath
+            const newVector = {
+                name: pageContext.current.vectorData.name,
+                color: pageContext.current.vectorData.color,
+                epsg: null
+            }
+
+            try {
+                await api.node.mountNode({
+                    nodeInfo: node.nodeInfo,
+                    templateName: 'vector',
+                    mountParamsString: JSON.stringify(newVector)
+                })
+
+                await api.vector.saveUploadedVector(node.nodeInfo, null, vectorFilePath)
+
+                node.isTemp = false
+                    ; (node as ResourceNode).tree.tempNodeExist = false
+                    ; (node.tree as ResourceTree).selectedNode = null
+                    ; (node.tree as ResourceTree).notifyDomUpdate()
+
+                const { isEditMode } = useLayerGroupStore.getState()
+                useToolPanelStore.getState().setActiveTab(isEditMode ? 'edit' : 'check')
+
+                await (node.tree as ResourceTree).refresh()
+                toast.success('Patch Created successfully')
+            } catch (error) {
+                toast.error('Failed to create vector: ' + (error as Error).message)
+                return
+            }
+        }
+        triggerRepaint()
     }
 
     return (
@@ -179,7 +236,7 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                                     <Label className="text-sm font-medium text-slate-900">Shapefile Path:</Label>
                                     <div className="flex items-center gap-2 ">
                                         <Input
-                                            value={pageContext.current.demFilePath || ''}
+                                            value={pageContext.current.vectorFilePath || ''}
                                             readOnly={true}
                                             placeholder="Select or paste a local file path"
                                             className="w-full h-8 bg-white border-slate-300 text-slate-900 placeholder:text-slate-400"
@@ -188,7 +245,7 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                                             variant={'default'}
                                             size={'sm'}
                                             className="cursor-pointer"
-                                        // onClick={handleUploadVectorFilePath}
+                                            onClick={handleUploadVectorFilePath}
                                         >
                                             Select
                                         </Button>
@@ -234,10 +291,10 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                                 </TabsContent>
                             </Tabs>
                         </div>
-                        <div className='mt-4'>
+                        <div className='mt-2'>
                             <Button
                                 type="button"
-                                // onClick={handleConfirmType}
+                                onClick={handleClickConfirm}
                                 className={`w-full ${createVectorTab === "draw" ? "bg-blue-500 hover:bg-blue-600" : "bg-green-500 hover:bg-green-600"} text-white cursor-pointer`}
                             >
                                 <span>Confirm</span>
