@@ -112,7 +112,6 @@ export default class VectorTemplate implements ITemplate {
                     await api.node.unmountNode(node.key)
                     toast.success(`Vector ${node.name} deleted successfully`)
                     useSelectedNodeStore.getState().setSelectedNodeKey('.')
-                    await (node as ResourceNode).close()
                     await (node.tree as ResourceTree).refresh()
                 }
                 break
