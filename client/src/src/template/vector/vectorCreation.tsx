@@ -203,9 +203,6 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
 
     const handleClickConfirm = async () => {
         if (pageContext.current.tabState === "draw") {
-            toast.info('暂时还没写')
-            console.log("Draw vector of type:", pageContext.current.pendingType)
-
             pageContext.current.vectorData.type = pageContext.current.pendingType
             const drawInstanceMode = getDrawInstanceModeByType(pageContext.current.pendingType);
             (drawInstance as any).changeMode(drawInstanceMode)
