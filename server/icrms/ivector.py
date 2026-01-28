@@ -11,6 +11,9 @@ class UpdateFeatureBody(BaseModel):
 
 @cc.icrm(namespace='gridmen', version='1.0.0')
 class IVector:
+    def get_epsg_code(self) -> str:
+        ...
+    
     def get_geojson_string(self) -> str:
         ...
     

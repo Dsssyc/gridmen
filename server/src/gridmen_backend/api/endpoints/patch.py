@@ -160,6 +160,7 @@ def pick_cells_by_feature(request: PickByFeatureRequest):
     # Get GDAL/OGR data source from file or vector node
     ###################################################
     
+    source_sr = None
     data_source = None
     # Get feature path
     if is_file:
@@ -186,11 +187,21 @@ def pick_cells_by_feature(request: PickByFeatureRequest):
         vector_lock_id = file_or_vector_node_key.lock_id
         with noodle.connect(IVector, vector_key, 'pr', lock_id=vector_lock_id) as vector:
             geojson_string = vector.get_geojson_string()
+            epsg_code = vector.get_epsg_code()
         try:
             # Parse geojson string into OGR data source
             data_source = ogr.Open(f'GeoJSON:{geojson_string}')
             if data_source is None:
                 raise ValueError(f'Could not open data source from vector node {vector_key}')
+            else:
+                # Set EPSG
+                source_sr = osr.SpatialReference()
+                source_sr.ImportFromEPSG(int(epsg_code))
+                # for i in range(data_source.GetLayerCount()):
+                #     layer = data_source.GetLayer(i)
+                #     if layer is not None:
+                #         layer.SetSpatialRef(source_sr)
+                
         except Exception as e:
             error_message = f'Error opening data source from vector node {vector_key}: {str(e)}'
             logging.error(error_message)
@@ -209,7 +220,9 @@ def pick_cells_by_feature(request: PickByFeatureRequest):
         
         # Transform the layer geometries to target spatial reference if needed
         transform = None
-        source_sr = layer.GetSpatialRef()
+        if source_sr is None:
+            source_sr = layer.GetSpatialRef()
+        
         if source_sr and target_sr and not source_sr.IsSame(target_sr):
             if int(osr.GetPROJVersionMajor()) >= 3:
                 source_sr.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)

@@ -38,6 +38,14 @@ class Vector:
         self.epsg = meta.epsg
         self.color = meta.color
     
+    def get_epsg_code(self) -> str:
+        if self.epsg:
+            return self.epsg
+        else:
+            with open(self.meta_path, 'r', encoding='utf-8') as f:
+                meta = json.load(f)
+            return meta.get('epsg', DEFAULT_EPSG)
+    
     def get_geojson_string(self) -> str:
         file_path = os.path.join(self.path, self.name + '.geojson')
         with open(file_path, 'r', encoding='utf-8') as f:
