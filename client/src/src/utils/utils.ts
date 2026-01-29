@@ -3,6 +3,8 @@ import mapboxgl from 'mapbox-gl'
 import { twMerge } from "tailwind-merge"
 import { clsx, type ClassValue } from "clsx"
 import * as apis from '@/template/api/apis'
+import CustomLayerGroup from '@/views/mapView/topology/customLayerGroup'
+import store from '@/store/store'
 
 export const vectorColorMap = [
     { value: "sky-500", color: "#0ea5e9", name: "Sky" },
@@ -50,27 +52,44 @@ export const convertPointCoordinate = async (originPoint: [number, number], from
     }
 }
 
-// export const convertBoundsCoordinates = async (bounds: [number, number, number, number], fromEPSG: number, toEPSG: number): Promise<[number, number, number, number]> => {
+export const waitForMapLoad = (map: mapboxgl.Map) => {
+    return new Promise<void>((resolve) => {
+        if (map.loaded()) {
+            resolve()
+        } else {
+            map.once('load', () => {
+                resolve()
+            })
+        }
+    })
+}
 
-//     const originSW: [number, number] = [bounds[0], bounds[1]]
-//     const originNE: [number, number] = [bounds[2], bounds[3]]
+export const waitForDrawInstanceLoad = (drawInstance: any) => {
+    return new Promise<void>((resolve) => {
+        const checkDraw = () => {
+            if (drawInstance && typeof drawInstance.changeMode === 'function') {
+                resolve()
+            } else {
+                setTimeout(checkDraw, 100)
+            }
+        }
+        checkDraw()
+    })
+}
 
-//     const fromEPSGDefs = await apis.proj.getProj4Defs(fromEPSG)
-//     const toEPSGDefs = await apis.proj.getProj4Defs(toEPSG)
-
-//     try {
-//         proj4.defs(`EPSG:${fromEPSG}`, fromEPSGDefs)
-//         proj4.defs(`EPSG:${toEPSG}`, toEPSGDefs)
-
-//         const convertedSW = proj4(`EPSG:${fromEPSG}`, `EPSG:${toEPSG}`, originSW)
-//         const convertedNE = proj4(`EPSG:${fromEPSG}`, `EPSG:${toEPSG}`, originNE)
-
-//         return [convertedSW[0], convertedSW[1], convertedNE[0], convertedNE[1]]
-//     } catch (error) {
-//         console.error('Error converting bounds coordinates:', error)
-//         return bounds
-//     }
-// }
+export const waitForCustomLayerGroup = () => {
+    return new Promise<CustomLayerGroup>((resolve) => {
+        const checkClg = () => {
+            const clg = store.get<CustomLayerGroup>('clg')!
+            if (clg) {
+                resolve(clg)
+            } else {
+                setTimeout(checkClg, 100)
+            }
+        }
+        checkClg()
+    })
+}
 
 const markerMap = new Map<string, mapboxgl.Marker>()
 const patchBoundsMap = new Map<string, { sourceId: string, fillLayerId: string, outlineLayerId: string }>()

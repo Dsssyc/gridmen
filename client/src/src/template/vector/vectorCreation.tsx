@@ -1,21 +1,21 @@
-import React, { useEffect, useReducer, useRef, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
+import { toast } from 'sonner'
+import * as api from '../api/apis'
+import { Badge } from "@/components/ui/badge"
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { vectorColorMap, waitForDrawInstanceLoad, waitForMapLoad } from '@/utils/utils'
+import { Button } from '@/components/ui/button'
 import { IResourceNode } from '../scene/iscene'
 import { IViewContext } from '@/views/IViewContext'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Dot, Globe, Minus, MousePointer, Palette, Pencil, Redo2, SplinePointer, Square, Trash2, Undo2 } from 'lucide-react'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Label } from '@/components/ui/label'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { vectorColorMap } from '@/utils/utils'
-import { ResourceNode, ResourceTree } from '../scene/scene'
-import { toast } from 'sonner'
-import { Badge } from "@/components/ui/badge"
-import * as api from '../api/apis'
-import { useLayerGroupStore, useToolPanelStore } from '@/store/storeSet'
 import { MapViewContext } from '@/views/mapView/mapView'
+import { ResourceNode, ResourceTree } from '../scene/scene'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { useLayerGroupStore, useToolPanelStore } from '@/store/storeSet'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Dot, Globe, Minus, MousePointer, Palette, Pencil, Redo2, SplinePointer, Square, Trash2, Undo2 } from 'lucide-react'
 
 interface VectorCreationProps {
     node: IResourceNode
@@ -28,7 +28,6 @@ interface PageContext {
     tabState: "draw" | "upload"
     pendingType: "point" | "line" | "polygon"
     vectorData: {
-        type: "point" | "line" | "polygon"
         name: string
         epsg: string
         color: string
@@ -55,7 +54,6 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
         tabState: "draw",
         pendingType: "point",
         vectorData: {
-            type: "point",
             name: "",
             epsg: "4326",
             color: "sky-500"
@@ -76,11 +74,22 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
         }
     }, [])
 
-    const loadContext = () => {
+    const loadContext = async () => {
+        console.log('has map', map, 'drawInstance', drawInstance)
+
+
         if ((node as ResourceNode).context !== undefined) {
             pageContext.current = { ...(node as ResourceNode).context }
         } else {
             pageContext.current.vectorData.name = node.name.split('.')[0]
+        }
+
+        await waitForMapLoad(map)
+        await waitForDrawInstanceLoad(drawInstance)
+
+        if (pageContext.current.hasVector) {
+            (drawInstance as any).changeMode(getDrawInstanceModeByType(pageContext.current.pendingType))
+            setDrawingMode("draw")
         }
 
         (node as ResourceNode).context = {
@@ -95,10 +104,14 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
             },
         }
 
+
         triggerRepaint()
     }
 
     const unloadContext = () => {
+        if (drawInstance) {
+            (drawInstance as any).changeMode('simple_select');
+        }
         (node as ResourceNode).context = {
             ...pageContext.current,
             __cleanup: {
@@ -115,6 +128,8 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
     }
 
     useEffect(() => {
+        if (!map || !drawInstance) return
+
         const onCreate = (e: any) => {
             if (e.features && Array.isArray(e.features)) {
                 for (const feature of e.features) {
@@ -203,7 +218,7 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
 
     const handleClickConfirm = async () => {
         if (pageContext.current.tabState === "draw") {
-            pageContext.current.vectorData.type = pageContext.current.pendingType
+            console.log('Creating vector with drawn features:', pageContext.current.pendingType)
             const drawInstanceMode = getDrawInstanceModeByType(pageContext.current.pendingType);
             (drawInstance as any).changeMode(drawInstanceMode)
 
@@ -474,9 +489,9 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                                         <div className="flex items-center justify-between">
                                             <span className="text-sm text-slate-500">Type</span>
                                             <div className="flex items-center gap-2">
-                                                {getVectorTypeIcon(pageContext.current.vectorData.type!)}
+                                                {getVectorTypeIcon(pageContext.current.pendingType!)}
                                                 <Badge variant="secondary" className="text-xs font-semibold">
-                                                    {pageContext.current.vectorData.type}
+                                                    {pageContext.current.pendingType}
                                                 </Badge>
                                             </div>
                                         </div>

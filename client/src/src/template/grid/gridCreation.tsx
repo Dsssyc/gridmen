@@ -69,8 +69,8 @@ interface SelectedVectorItem {
 
 interface PageContext {
     name: string
-    demFilePath: string
-    lumFilePath: string
+    demFilePath: string | null
+    lumFilePath: string | null
     patchMap: Map<string, PatchMapInfo[]>
     selectedVectors: SelectedVectorItem[]
 }
@@ -547,10 +547,10 @@ export default function GridCreation({ node, context }: GridCreationProps) {
     }
 
     const handleAssemblyClick = () => {
-        if (pageContext.current.demFilePath === "" || pageContext.current.lumFilePath === "") {
-            toast.error("Please upload both DEM and LUM files before creating the grid")
-            return
-        }
+        // if (pageContext.current.demFilePath === null && pageContext.current.lumFilePath === null) {
+        //     toast.error("Please upload DEM or LUM files before creating the grid")
+        //     return
+        // }
 
         if (pageContext.current.patchMap.size > 1) {
             toast.error("Please delete patches with different schemas before creating the grid")
@@ -677,7 +677,7 @@ export default function GridCreation({ node, context }: GridCreationProps) {
                                 <div className="flex items-center gap-2">
                                     <div className="min-w-0">
                                         <Input
-                                            value={pageContext.current.demFilePath}
+                                            value={pageContext.current.demFilePath || ""}
                                             readOnly={true}
                                             placeholder="Select DEM file"
                                             className="h-8 w-full min-w-0 rounded-sm text-base text-black border-slate-300"
@@ -715,7 +715,7 @@ export default function GridCreation({ node, context }: GridCreationProps) {
                                 <div className="flex items-center gap-2">
                                     <div className="min-w-0">
                                         <Input
-                                            value={pageContext.current.lumFilePath}
+                                            value={pageContext.current.lumFilePath || ""}
                                             readOnly={true}
                                             placeholder="Select LUM file"
                                             className="h-8 w-full min-w-0 rounded-sm text-base text-black border-slate-300"

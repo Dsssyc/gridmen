@@ -28,7 +28,7 @@ function FrameworkShell() {
     const navigate = useNavigate()
 
     const [triggerFocus, setTriggerFocus] = useState(0)
-    const [activeIconID, setActiveIconID] = useState<'map-view' | 'table-view'>('map-view')
+    const [activeIconID, setActiveIconID] = useState<'map-view' | 'table-view' | 'settings'>('map-view')
     const [isLoggedIn, setIsLoggedIn] = useState(true)
 
     const [privateTree, setPrivateTree] = useState<ResourceTree | null>(null)
@@ -57,7 +57,12 @@ function FrameworkShell() {
                 navigate('/framework')
                 return
             case 'settings':
-                navigate('/settings')
+                setActiveIconID('settings')
+                if (!isLoggedIn) {
+                    navigate('/login')
+                    return
+                }
+                navigate('/framework')
                 return
             case 'user':
                 navigate('/login')
@@ -79,7 +84,6 @@ function FrameworkShell() {
     const currentActiveId = useMemo(() => {
         const path = location.pathname
         if (path.startsWith('/framework')) return activeIconID
-        if (path.startsWith('/settings')) return 'settings'
         if (path.startsWith('/login')) return 'user'
         // /hello (and others): no active icon
         return null
@@ -247,6 +251,8 @@ function FrameworkShell() {
                 return <MapViewComponent templateName={currentTemplateName} selectedNode={selectedNode} getResourceNodeByKey={getResourceNodeByKey} />
             case 'table-view':
                 return <TableViewComponent />
+            case 'settings':
+                return <SettingView />
             default:
                 return <MapViewComponent templateName={currentTemplateName} selectedNode={selectedNode} getResourceNodeByKey={getResourceNodeByKey} />
         }
@@ -270,33 +276,40 @@ function FrameworkShell() {
                             : <LoginRoute onLogin={() => setIsLoggedIn(true)} />
                     }
                 />
-                <Route path='settings' element={<SettingView />} />
                 <Route
                     path="framework"
                     element={
                         isLoggedIn
                             ? (
-                                <ResizablePanelGroup
-                                    direction="horizontal"
-                                    className="h-full w-[98%] text-white"
-                                >
-                                    <ResizablePanel defaultSize={11}>
-                                        <ResourceTreeComponent
-                                            privateTree={privateTree}
-                                            publicTree={publicTree}
-                                            focusNode={focusNode}
-                                            triggerFocus={triggerFocus}
-                                            onNodeMenuOpen={handleNodeMenuOpen}
-                                            onNodeRemove={handleNodeRemove}
-                                            onNodeClick={handleNodeClick}
-                                            onNodeDoubleClick={handleNodeDoubleClick}
-                                        />
-                                    </ResizablePanel>
-                                    <ResizableHandle className="opacity-0 hover:bg-blue-200" />
-                                    <ResizablePanel defaultSize={89}>
-                                        {renderActiveView()}
-                                    </ResizablePanel>
-                                </ResizablePanelGroup>
+                                activeIconID === 'settings'
+                                    ? (
+                                        <div className="h-full w-[98%]">
+                                            {renderActiveView()}
+                                        </div>
+                                    )
+                                    : (
+                                        <ResizablePanelGroup
+                                            direction="horizontal"
+                                            className="h-full w-[98%] text-white"
+                                        >
+                                            <ResizablePanel defaultSize={11}>
+                                                <ResourceTreeComponent
+                                                    privateTree={privateTree}
+                                                    publicTree={publicTree}
+                                                    focusNode={focusNode}
+                                                    triggerFocus={triggerFocus}
+                                                    onNodeMenuOpen={handleNodeMenuOpen}
+                                                    onNodeRemove={handleNodeRemove}
+                                                    onNodeClick={handleNodeClick}
+                                                    onNodeDoubleClick={handleNodeDoubleClick}
+                                                />
+                                            </ResizablePanel>
+                                            <ResizableHandle className="opacity-0 hover:bg-blue-200" />
+                                            <ResizablePanel defaultSize={89}>
+                                                {renderActiveView()}
+                                            </ResizablePanel>
+                                        </ResizablePanelGroup>
+                                    )
                             )
                             : <Navigate to="/login" replace />
                     }

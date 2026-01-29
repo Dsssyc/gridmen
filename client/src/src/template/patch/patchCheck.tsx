@@ -9,7 +9,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { linkNode } from '../api/node'
 import { PatchMeta } from '../api/types'
 import * as api from '../api/apis'
-import { convertBoundsCoordinates } from '@/utils/utils'
+import { convertBoundsCoordinates, waitForCustomLayerGroup, waitForMapLoad } from '@/utils/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import TopologyLayer from '@/views/mapView/topology/TopologyLayer'
 import CustomLayerGroup from '@/views/mapView/topology/customLayerGroup'
@@ -72,35 +72,35 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
             boundsOn4326.current = await convertBoundsCoordinates(pageContext.current!.bounds, pageContext.current!.epsg, 4326)
         }
 
-        const waitForMapLoad = () => {
-            return new Promise<void>((resolve) => {
-                if (map.loaded()) {
-                    resolve()
-                } else {
-                    map.once('load', () => {
-                        resolve()
-                    })
-                }
-            })
-        }
+        // const waitForMapLoad = () => {
+        //     return new Promise<void>((resolve) => {
+        //         if (map.loaded()) {
+        //             resolve()
+        //         } else {
+        //             map.once('load', () => {
+        //                 resolve()
+        //             })
+        //         }
+        //     })
+        // }
 
-        await waitForMapLoad()
+        await waitForMapLoad(map)
 
-        const waitForClg = () => {
-            return new Promise<CustomLayerGroup>((resolve) => {
-                const checkClg = () => {
-                    const clg = store.get<CustomLayerGroup>('clg')!
-                    if (clg) {
-                        resolve(clg)
-                    } else {
-                        setTimeout(checkClg, 100)
-                    }
-                }
-                checkClg()
-            })
-        }
+        // const waitForClg = () => {
+        //     return new Promise<CustomLayerGroup>((resolve) => {
+        //         const checkClg = () => {
+        //             const clg = store.get<CustomLayerGroup>('clg')!
+        //             if (clg) {
+        //                 resolve(clg)
+        //             } else {
+        //                 setTimeout(checkClg, 100)
+        //             }
+        //         }
+        //         checkClg()
+        //     })
+        // }
 
-        const clg = await waitForClg()
+        const clg = await waitForCustomLayerGroup()
 
         const topologyLayerId = `TopologyLayer:${(node as ResourceNode).nodeInfo}`
 

@@ -41,7 +41,7 @@ import { IViewContext } from '@/views/IViewContext'
 import CapacityBar from '@/components/ui/capacityBar'
 import { Separator } from '@/components/ui/separator'
 import { MapViewContext } from '@/views/mapView/mapView'
-import { convertBoundsCoordinates, getHexColorByValue, vectorColorMap } from '@/utils/utils'
+import { convertBoundsCoordinates, getHexColorByValue, vectorColorMap, waitForCustomLayerGroup, waitForMapLoad } from '@/utils/utils'
 import { boundingBox2D } from '@/core/util/boundingBox2D'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import TopologyLayer from '@/views/mapView/topology/TopologyLayer'
@@ -216,10 +216,6 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             store.get<{ on: Function, off: Function }>('isLoading')!.off()
         }
 
-        // if ((node as ResourceNode).context !== undefined) {
-        //     pageContext.current = { ...(node as ResourceNode).context }
-        // }
-
         if ((node as ResourceNode).mountParams === null) {
             const patchInfo = await api.patch.getPatchMeta(node.nodeInfo, (node as ResourceNode).lockId!);
             (node as ResourceNode).mountParams = patchInfo
@@ -228,36 +224,9 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             pageContext.current.patch = (node as ResourceNode).mountParams
         }
 
-        const waitForMapLoad = () => {
-            return new Promise<void>((resolve) => {
-                if (map.loaded()) {
-                    resolve()
-                } else {
-                    map.once('load', () => {
-                        resolve()
-                    })
-                }
-            })
-        }
+        await waitForMapLoad(map)
 
-        await waitForMapLoad()
-
-        const waitForClg = () => {
-            return new Promise<CustomLayerGroup>((resolve) => {
-                const checkClg = () => {
-                    const clg = store.get<CustomLayerGroup>('clg')!
-                    if (clg) {
-                        resolve(clg)
-                    } else {
-                        setTimeout(checkClg, 100)
-                    }
-                }
-                checkClg()
-            })
-        }
-
-        const clg = await waitForClg()
-        // clg.removeLayer('TopologyLayer')
+        const clg = await waitForCustomLayerGroup()
 
         const topologyLayerId = `TopologyLayer:${(node as ResourceNode).nodeInfo}`
 
