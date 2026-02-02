@@ -101,6 +101,20 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
 
     const [, triggerRepaint] = useReducer((x) => x + 1, 0)
 
+    const getNodeFeatures = (): GeoJSON.FeatureCollection => {
+        const allFeatures = drawInstance.getAll()
+        const nodeFeatures = allFeatures.features.filter((feature: any) => {
+            if (!feature.id) return false
+            if (pageContext.current.editedVectorIds.has(feature.id)) return true
+            const props = feature.properties || {}
+            return props.session_id === node.nodeInfo
+        })
+        return {
+            type: 'FeatureCollection',
+            features: nodeFeatures
+        }
+    }
+
     useEffect(() => {
         loadContext()
         return () => {
@@ -121,13 +135,20 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
             (node as ResourceNode).mountParams = vectorInfo.data
         }
 
+        console.log('Vector mountParams:', (node as ResourceNode).mountParams);
+
         pageContext.current.vectorData.type = (node as ResourceNode).mountParams.feature_json?.features[0]?.geometry.type
         pageContext.current.vectorData.name = (node as ResourceNode).mountParams.name
         pageContext.current.vectorData.epsg = (node as ResourceNode).mountParams.epsg
         pageContext.current.vectorData.color = (node as ResourceNode).mountParams.color
         pageContext.current.drawVector = (node as ResourceNode).mountParams.feature_json
 
+        // TODO：drawVector在修改后应发生改变
+        console.log(pageContext.current.drawVector)
+
         pageContext.current.drawVector?.features.forEach((feature) => pageContext.current.editedVectorIds.add(feature.id as string))
+
+        console.log(pageContext.current.drawVector!)
 
         drawInstance.add(pageContext.current.drawVector!);
 
@@ -138,7 +159,9 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                 vectorEdit: () => {
                     const featureIds = Array.from(pageContext.current.editedVectorIds)
                     drawInstance.delete(featureIds)
-                    pageContext.current.editedVectorIds.clear()
+                    pageContext.current.editedVectorIds.clear();
+
+                    (node as ResourceNode).mountParams = undefined
                 }
             },
         }
@@ -176,7 +199,8 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                     pageContext.current.editedVectorIds.add(feature.id)
                 }
             }
-            pageContext.current.drawVector = drawInstance.getAll()
+
+            pageContext.current.drawVector = getNodeFeatures()
             triggerRepaint()
 
             if (pageContext.current.drawingMode === "draw") {
@@ -195,7 +219,8 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                     }
                 }
             }
-            pageContext.current.drawVector = drawInstance.getAll()
+
+            pageContext.current.drawVector = getNodeFeatures()
             triggerRepaint()
         }
 
@@ -207,6 +232,9 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                     }
                 }
             }
+
+            pageContext.current.drawVector = getNodeFeatures()
+            triggerRepaint()
         }
 
         map.on("draw.create", onCreate)
@@ -239,7 +267,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
         if (pageContext.current.drawingMode !== "select") return
         (drawInstance as any)?.trash?.()
 
-        pageContext.current.drawVector = drawInstance.getAll()
+        pageContext.current.drawVector = getNodeFeatures()
         triggerRepaint()
     }, [drawInstance])
 
@@ -303,7 +331,9 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
         (drawInstance as any).changeMode('simple_select')
 
         try {
-            await api.vector.updateVector(node.nodeInfo, lockId, updateData)
+            await api.vector.updateVector(node.nodeInfo, lockId, updateData);
+
+            (node as ResourceNode).mountParams = undefined
             toast.success("Vector updated successfully")
         } catch (error) {
             console.error("Failed to update vector:", error)

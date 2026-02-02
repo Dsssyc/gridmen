@@ -568,7 +568,6 @@ export default class TopologyLayer implements NHCustomLayerInterface {
     }
 
     executePickCellsByVectorNode(vectorNodeInfo: string, vectorNodeLockId: string | null, addMode = true) {
-        console.log('addmode', addMode)
         this.startCallback()
         this.patchCore.getCellInfoByVectorNode(vectorNodeInfo, vectorNodeLockId, (storageIds: number[]) => {
             this._hit(storageIds, addMode)
@@ -596,7 +595,7 @@ export default class TopologyLayer implements NHCustomLayerInterface {
         this.map.triggerRepaint()
         return pickedStorageIds
     }
-    
+
     // Delete cells  //////////////////////////////////////////////////
 
     deleteCellsLocally(storageIds: number[]) {
@@ -739,12 +738,14 @@ export default class TopologyLayer implements NHCustomLayerInterface {
         }
         this.deleteCellsLocally(subdividableStorageIds)
         this._subdivideCells(subdivideInfo)
+        store.get<{ on: Function; off: Function }>('isLoading')!.off()
     }
 
     executeMergeCells() {
         const mergeableStorageIds = this.executeClearSelection()
             .filter(mergeableStorageId => !this._patchCore!.isDeleted(mergeableStorageId))
         this._mergeCells(mergeableStorageIds)
+        store.get<{ on: Function; off: Function }>('isLoading')!.off()
     }
 
     // Rendering ///////////////////////////////////////////////////

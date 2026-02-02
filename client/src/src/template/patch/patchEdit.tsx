@@ -41,13 +41,13 @@ import { IViewContext } from '@/views/IViewContext'
 import CapacityBar from '@/components/ui/capacityBar'
 import { Separator } from '@/components/ui/separator'
 import { MapViewContext } from '@/views/mapView/mapView'
-import { convertBoundsCoordinates, getHexColorByValue, vectorColorMap, waitForCustomLayerGroup, waitForMapLoad } from '@/utils/utils'
 import { boundingBox2D } from '@/core/util/boundingBox2D'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import TopologyLayer from '@/views/mapView/topology/TopologyLayer'
 import CustomLayerGroup from '@/views/mapView/topology/customLayerGroup'
-import { ensureTopologyLayerInitialized, getOrCreateTopologyLayer } from '@/views/mapView/topology/topologyLayerManager'
+import { convertBoundsCoordinates, waitForCustomLayerGroup, waitForMapLoad } from '@/utils/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { ensureTopologyLayerInitialized, getOrCreateTopologyLayer } from '@/views/mapView/topology/topologyLayerManager'
 
 interface PatchEditProps {
     node: IResourceNode
@@ -65,6 +65,7 @@ interface PageContext {
     }
     vectorLockId: string | null
     vectorData: Record<string, any> | null
+    selectedVectorFeatureIds: Set<string>
 }
 
 interface GridCheckingInfo {
@@ -122,53 +123,12 @@ const topologyOperations = [
     },
 ]
 
-const toPreviewFeatureCollection = (input: any, forcedHexColor: string): GeoJSON.FeatureCollection => {
-    const features = Array.isArray(input?.features) ? input.features : []
-
-    const validFeatures = features
-        .filter((f: any) => {
-            const t = f?.geometry?.type
-            if (!t) return false
-            if (t === 'Polygon') {
-                const ring = f?.geometry?.coordinates?.[0]
-                return Array.isArray(ring) && ring.length >= 4
-            }
-            if (t === 'MultiPolygon') {
-                const firstRing = f?.geometry?.coordinates?.[0]?.[0]
-                return Array.isArray(firstRing) && firstRing.length >= 4
-            }
-            if (t === 'LineString') {
-                const coords = f?.geometry?.coordinates
-                return Array.isArray(coords) && coords.length >= 2
-            }
-            if (t === 'Point') {
-                const coords = f?.geometry?.coordinates
-                return Array.isArray(coords) && coords.length >= 2
-            }
-            return true
-        })
-        .map((f: any) => {
-            const id = f?.id ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`)
-            return {
-                ...f,
-                id,
-                properties: {
-                    ...(f?.properties ?? {}),
-                    user_color: forcedHexColor,
-                },
-            }
-        })
-
-    return {
-        type: 'FeatureCollection',
-        features: validFeatures,
-    }
-}
-
 export default function PatchEdit({ node, context }: PatchEditProps) {
     const mapContext = context as MapViewContext
     const map = mapContext.map!
-    const drawInstance = mapContext.drawInstance
+    const drawInstance = mapContext.drawInstance!
+
+    const topologyLayerId = `TopologyLayer:${(node as ResourceNode).nodeInfo}`
 
     const pageContext = useRef<PageContext>({
         patch: null,
@@ -181,6 +141,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         },
         vectorLockId: null,
         vectorData: null,
+        selectedVectorFeatureIds: new Set<string>(),
     })
 
     const gridInfo = useRef<GridCheckingInfo | null>(null)
@@ -228,8 +189,6 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
         const clg = await waitForCustomLayerGroup()
 
-        const topologyLayerId = `TopologyLayer:${(node as ResourceNode).nodeInfo}`
-
         const gridContext: PatchContext = {
             nodeInfo: node.nodeInfo,
             lockId: (node as ResourceNode).lockId!,
@@ -270,15 +229,12 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             __cleanup: {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
                 topology: () => {
-                    try {
-                        const clg = store.get<CustomLayerGroup>('clg')
-                        clg?.removeLayer(topologyLayerId)
-                    } catch (err) {
-                        console.error('PatchEdit cleanup failed to remove TopologyLayer:', err)
-                    }
-                    map.dragPan.enable()
-                    map.scrollZoom.enable()
-                    if (map.getCanvas()) map.getCanvas().style.cursor = ''
+                    const clg = store.get<CustomLayerGroup>('clg')
+                    clg?.removeLayer(topologyLayerId)
+
+                    const featureIds = Array.from(pageContext.current.selectedVectorFeatureIds!)
+                    drawInstance.delete(featureIds)
+                    pageContext.current.selectedVectorFeatureIds!.clear()
 
                     pageContext.current.topologyLayer = null
                     pageContext.current.patchCore = null
@@ -292,12 +248,23 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
     const unloadContext = () => {
 
         console.log('unloadContext called')
-        // topologyLayer!.executeClearSelection()
-        // TODO: 无法记录操作按钮的选中状态
-        // console.log(pageContext.current.editingState)
-        // pageContext.current.editingState.select = selectTab
-        // pageContext.current.editingState.pick = pickingTab
-        // pageContext.current.isChecking = checkSwitchOn
+
+        handleClearUploadedFeature();
+
+        (node as ResourceNode).context = {
+            ...pageContext.current,
+            topologyLayerId,
+            __cleanup: {
+                ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
+                topology: () => {
+                    const clg = store.get<CustomLayerGroup>('clg')
+                    clg?.removeLayer(topologyLayerId)
+
+                    pageContext.current.topologyLayer = null
+                    pageContext.current.patchCore = null
+                },
+            },
+        }
     }
 
     useEffect(() => {
@@ -433,9 +400,11 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
     const handleConfirmTopologyAction = useCallback(() => {
         switch (activeTopologyOperation) {
             case 'subdivide':
+                store.get<{ on: Function; off: Function }>('isLoading')!.on()
                 topologyLayer!.executeSubdivideCells()
                 break
             case 'merge':
+                store.get<{ on: Function; off: Function }>('isLoading')!.on()
                 topologyLayer!.executeMergeCells()
                 break
             case 'delete':
@@ -496,7 +465,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                 return
             }
 
-            pageContext.current.vectorLockId = dragNodeLockId
+            handleClearUploadedFeature()
 
             setFeaturePickResource({
                 kind: 'vector',
@@ -505,28 +474,22 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                 name: payload.sourceTreeTitle || 'Vector'
             })
 
+            store.get<{ on: Function; off: Function }>('isLoading')!.on()
+
             const vectorData = await api.vector.getVector(dragNodeInfo, dragNodeLockId || '')
-            console.log('Dragged vector data:', vectorData.data)
-            pageContext.current.vectorData = vectorData.data
+            pageContext.current.vectorData = vectorData.data;
+
+
+            (vectorData.data.feature_json as GeoJSON.FeatureCollection).features.forEach(feature => pageContext.current.selectedVectorFeatureIds?.add(feature.id as string))
 
             try {
-                const hex = getHexColorByValue((vectorData.data as any)?.color)
-                const fc = toPreviewFeatureCollection((vectorData.data as any)?.feature_json, hex)
-
                 if (drawInstance) {
-                    drawInstance.deleteAll()
-                    if (fc.features.length > 0) {
-                        drawInstance.add(fc as any)
-                        const all = drawInstance.getAll()
-                        for (const feature of all.features as any[]) {
-                            if (!feature?.id) continue
-                            drawInstance.setFeatureProperty(feature.id, 'user_color', hex)
-                        }
-                    }
+                    drawInstance.add(pageContext.current.vectorData.feature_json as any)
                 }
             } catch (renderErr) {
                 console.warn('Failed to render dragged vector on map:', renderErr)
             }
+            store.get<{ on: Function; off: Function }>('isLoading')!.off()
 
             triggerRepaint()
         } catch (error) {
@@ -539,13 +502,17 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         setFeaturePickResource(null)
 
         try {
-            drawInstance?.deleteAll()
+            const featureIds = Array.from(pageContext.current.selectedVectorFeatureIds!)
+            drawInstance.delete(featureIds)
+            pageContext.current.selectedVectorFeatureIds!.clear()
         } catch (e) {
             console.warn('Failed to clear draw preview:', e)
         }
 
         pageContext.current.vectorLockId = null
         pageContext.current.vectorData = null
+
+        triggerRepaint()
     }
 
     const handleSelectFeaturePick = useCallback(async () => {
@@ -560,7 +527,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         }
 
         try {
-            // store.get<{ on: Function; off: Function }>('isLoading')!.on()
+            store.get<{ on: Function; off: Function }>('isLoading')!.on()
 
             if (featurePickResource.kind === 'vector') {
                 topologyLayer.executePickCellsByVectorNode(featurePickResource.nodeInfo, pageContext.current.vectorLockId, pickingTab)
@@ -568,7 +535,6 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             }
         } catch (error) {
             console.error('Error executing feature pick:', error)
-            // store.get<{ on: Function; off: Function }>('isLoading')!.off()
             toast.error('Failed to execute feature pick')
         }
     }, [featurePickResource, topologyLayer, pickingTab])
@@ -577,9 +543,11 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         if (highSpeedMode && operationType !== null) {
             switch (operationType) {
                 case 'subdivide':
+                    store.get<{ on: Function; off: Function }>('isLoading')!.on()
                     topologyLayer!.executeSubdivideCells()
                     break
                 case 'merge':
+                    store.get<{ on: Function; off: Function }>('isLoading')!.on()
                     topologyLayer!.executeMergeCells()
                     break
                 case 'delete':
@@ -637,6 +605,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                 if (event.key === 'S' || event.key === 's') {
                     event.preventDefault()
                     if (highSpeedMode) {
+                        store.get<{ on: Function; off: Function }>('isLoading')!.on()
                         topologyLayer!.executeSubdivideCells()
                     } else {
                         setActiveTopologyOperation('subdivide')
@@ -645,6 +614,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                 if (event.key === 'M' || event.key === 'm') {
                     event.preventDefault()
                     if (highSpeedMode) {
+                        store.get<{ on: Function; off: Function }>('isLoading')!.on()
                         topologyLayer!.executeMergeCells()
                     } else {
                         setActiveTopologyOperation('merge')

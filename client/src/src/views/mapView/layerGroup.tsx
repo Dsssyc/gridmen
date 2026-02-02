@@ -1,13 +1,13 @@
 import { useState } from "react"
-import { ChevronDown, ChevronRight, Eye, EyeOff, Layers, Trash2, GripVertical, MapPin, Square, MapPinned, SquaresUnite, SplinePointer } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/utils/utils"
-import { useLayerStore, useLayerGroupStore, useToolPanelStore } from "@/store/storeSet"
-import { ResourceTree } from "@/template/scene/scene"
-import type { Layer } from "@/store/storeTypes"
-import type { ResourceNode } from "@/template/scene/scene"
+import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
+import type { Layer } from "@/store/storeTypes"
+import { ResourceTree } from "@/template/scene/scene"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import type { ResourceNode } from "@/template/scene/scene"
+import { useLayerStore, useLayerGroupStore, useToolPanelStore } from "@/store/storeSet"
+import { ChevronDown, ChevronRight, Eye, EyeOff, Layers, Trash2, GripVertical, MapPin, Square, MapPinned, SquaresUnite, SplinePointer } from "lucide-react"
 
 interface LayerGroupProps {
     getResourceNodeByKey?: (key: string) => any | null
@@ -387,11 +387,14 @@ export default function LayerGroup({ getResourceNodeByKey }: LayerGroupProps) {
                     }}
                 >
                     {/* Expand/Collapse Icon */}
-                    <div className="w-4 h-4 flex items-center justify-center">
-                        <button onClick={() => toggleExpanded(layer.id)} className="hover:bg-white/10 rounded cursor-pointer">
-                            {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
-                        </button>
-                    </div>
+
+                    {isGroup &&
+                        <div className="w-4 h-4 flex items-center justify-center">
+                            <button onClick={() => toggleExpanded(layer.id)} className="hover:bg-white/10 rounded cursor-pointer">
+                                {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+                            </button>
+                        </div>
+                    }
 
                     {/* Visibility Toggle */}
                     {/* <button
@@ -475,7 +478,6 @@ export default function LayerGroup({ getResourceNodeByKey }: LayerGroupProps) {
                     variant="ghost"
                     className="group h-6 w-1/2 px-2 text-xs rounded-sm hover:bg-white/10 cursor-pointer"
                     onClick={handleRemoveAllLayers}
-                // TODO: 清空Resource Node内图层
                 >
                     <Trash2 className="w-4 h-4 text-gray-400 group-hover:text-red-500" />
                     <span className="text-gray-400 group-hover:text-gray-200">Remove</span>

@@ -1,5 +1,5 @@
 import { IconEntry } from "@/components/iconBar"
-import { Settings, Combine, Languages, User, Map, ChartArea, Bot } from 'lucide-react'
+import { Settings, Languages, User, Map, ChartArea } from 'lucide-react'
 
 export const ICON_REGISTRY: IconEntry[] = [
     { id: 'map-view', icon: Map, label: 'Map View' },

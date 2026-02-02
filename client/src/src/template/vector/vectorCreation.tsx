@@ -68,6 +68,20 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
 
     const [, triggerRepaint] = useReducer(x => x + 1, 0)
 
+    const getNodeFeatures = (): GeoJSON.FeatureCollection => {
+        const allFeatures = drawInstance.getAll()
+        const nodeFeatures = allFeatures.features.filter((feature: any) => {
+            if (!feature.id) return false
+            if (pageContext.current.createdVectorIds.has(feature.id)) return true
+            const props = feature.properties || {}
+            return props.session_id === node.nodeInfo
+        })
+        return {
+            type: 'FeatureCollection',
+            features: nodeFeatures
+        }
+    }
+
     useEffect(() => {
         triggerRepaint()
         loadContext()
@@ -137,7 +151,8 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                     pageContext.current.createdVectorIds.add(feature.id)
                 }
             }
-            pageContext.current.drawVector = drawInstance.getAll()
+
+            pageContext.current.drawVector = getNodeFeatures()
             triggerRepaint()
 
             if (pageContext.current.drawingMode === "draw") {
@@ -156,7 +171,8 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                     }
                 }
             }
-            pageContext.current.drawVector = drawInstance.getAll()
+
+            pageContext.current.drawVector = getNodeFeatures()
             triggerRepaint()
         }
 
@@ -305,7 +321,7 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
             pageContext.current.createdVectorIds.delete(id)
         }
 
-        pageContext.current.drawVector = drawInstance.getAll()
+        pageContext.current.drawVector = getNodeFeatures()
         triggerRepaint()
     }
 
@@ -316,7 +332,12 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
             epsg: "4326"
         }
 
-        const featureJson = drawInstance.getAll();
+        const featureJson = getNodeFeatures();
+
+        if (featureJson.features.length === 0) {
+            toast.error('No features drawn. Please draw features before creating the vector.')
+            return
+        }
 
         try {
             store.get<{ on: Function, off: Function }>('isLoading')!.on()

@@ -292,7 +292,7 @@ function FrameworkShell() {
                                             direction="horizontal"
                                             className="h-full w-[98%] text-white"
                                         >
-                                            <ResizablePanel defaultSize={11}>
+                                            <ResizablePanel defaultSize={10.5}>
                                                 <ResourceTreeComponent
                                                     privateTree={privateTree}
                                                     publicTree={publicTree}
@@ -305,7 +305,7 @@ function FrameworkShell() {
                                                 />
                                             </ResizablePanel>
                                             <ResizableHandle className="opacity-0 hover:bg-blue-200" />
-                                            <ResizablePanel defaultSize={89}>
+                                            <ResizablePanel defaultSize={89.5}>
                                                 {renderActiveView()}
                                             </ResizablePanel>
                                         </ResizablePanelGroup>

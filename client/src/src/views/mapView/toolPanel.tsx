@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { MapViewContext } from './mapView'
 import { IResourceNode } from '@/template/scene/iscene'
 import { useToolPanelStore } from '@/store/storeSet'
@@ -27,38 +28,39 @@ export default function ToolPanel({
 }: ToolPanelProps) {
     const activeTab = useToolPanelStore((s) => s.activeTab)
 
-    if (!viewModels) {
-        return (
-            <div className="flex h-full w-full items-center justify-center bg-gray-800 text-white">
-                No Tool Panel Available
-            </div>
-        )
-    }
+    const currentViewModel = viewModels?.[templateName] || viewModels?.['default'] || null
 
-    const currentViewModel = viewModels[templateName] || viewModels['default']
+    const context: MapViewContext = useMemo(
+        () => ({
+            map: mapContainer,
+            drawInstance,
+            setMap: (map: mapboxgl.Map) => {
+                console.log('setMap', map)
+            },
+            setDrawInstance: (drawInstance: MapboxDraw) => {
+                console.log('setDrawInstance', drawInstance)
+            },
+        }),
+        [mapContainer, drawInstance]
+    )
 
-    if (!currentViewModel) {
-        return (
-            <div className="flex h-full w-full items-center justify-center bg-gray-800 text-white">
-                No View Model Found for template: {templateName}
-            </div>
-        )
-    }
+    // Important: currentViewModel.{check,create,edit} returns a component function.
+    // If we call it on every ToolPanel render, we create a new component type each time,
+    // causing React to unmount/remount (triggering useEffect cleanups like unloadContext).
+    const nodeArg = selectedNode || null
 
-    const context: MapViewContext = {
-        map: mapContainer,
-        drawInstance,
-        setMap: (map: mapboxgl.Map) => {
-            console.log('setMap', map)
-        },
-        setDrawInstance: (drawInstance: MapboxDraw) => {
-            console.log('setDrawInstance', drawInstance)
-        }
-    }
-
-    const CheckComponent = currentViewModel.check ? currentViewModel.check(selectedNode || null, context) : null
-    const CreateComponent = currentViewModel.create ? currentViewModel.create(selectedNode || null, context) : null
-    const EditComponent = currentViewModel.edit ? currentViewModel.edit(selectedNode || null, context) : null
+    const CheckComponent = useMemo(
+        () => (currentViewModel?.check ? currentViewModel.check(nodeArg, context) : null),
+        [currentViewModel, nodeArg, context]
+    )
+    const CreateComponent = useMemo(
+        () => (currentViewModel?.create ? currentViewModel.create(nodeArg, context) : null),
+        [currentViewModel, nodeArg, context]
+    )
+    const EditComponent = useMemo(
+        () => (currentViewModel?.edit ? currentViewModel.edit(nodeArg, context) : null),
+        [currentViewModel, nodeArg, context]
+    )
 
     const ActiveComponent =
         activeTab === 'edit'
@@ -67,8 +69,21 @@ export default function ToolPanel({
                 ? (CheckComponent || CreateComponent)
                 : CreateComponent
 
-    // console.log('ToolPanel Render', { activeTab, ActiveComponent })
-    // console.log('ToolPanel Render', { selectedNode })
+    if (!viewModels) {
+        return (
+            <div className="flex h-full w-full items-center justify-center bg-gray-800 text-white">
+                No Tool Panel Available
+            </div>
+        )
+    }
+
+    if (!currentViewModel) {
+        return (
+            <div className="flex h-full w-full items-center justify-center bg-gray-800 text-white">
+                No View Model Found for template: {templateName}
+            </div>
+        )
+    }
 
     return (
         <div className="flex flex-col h-full w-full bg-gray-900">

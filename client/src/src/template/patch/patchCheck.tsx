@@ -18,6 +18,7 @@ import store from '@/store/store'
 import PatchCore from '@/core/grid/patchCore'
 import { PatchContext } from '@/core/grid/types'
 import { boundingBox2D } from '@/core/util/boundingBox2D'
+import CapacityBar from '@/components/ui/capacityBar'
 
 interface PatchCheckProps {
     node: IResourceNode
@@ -194,6 +195,7 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
                         </ul>
                     </div>
                     <div className='text-sm w-full flex flex-row items-center px-4'>
+                        {/* <CapacityBar gridCore={pageContext.current.patchCore!} /> */}
                         <Button
                             className='bg-sky-500 hover:bg-sky-600 h-8 text-white cursor-pointer rounded-sm flex'
                             onClick={() => {

@@ -145,8 +145,6 @@ export default function GridCreation({ node, context }: GridCreationProps) {
     const loadContext = () => {
         if ((node as ResourceNode).context !== undefined) {
             pageContext.current = { ...(node as ResourceNode).context }
-            // pageContext.current.AlignmentOriginOn4326 = await convertPointCoordinate(pageContext.current.schema!.alignment_origin, pageContext.current.schema!.epsg, 4326)
-            console.log(pageContext.current)
         } else {
             pageContext.current.name = node.name.split('.')[0]
         }
