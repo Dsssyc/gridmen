@@ -1,0 +1,16 @@
+{
+  "name": "gridmen-workspace",
+  "version": "1.0.0",
+  "description": "Gridmen workspace root",
+  "scripts": {
+    "start": "concurrently \"npm run start:client\" \"npm run dev:web\" \"npm run start:server\"",
+    "start:client": "cd client && npm start",
+    "dev:web": "cd client/src && npm run dev",
+    "start:server": "cd server && uv run main.py"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0"
+  },
+  "author": "",
+  "license": "ISC"
+}

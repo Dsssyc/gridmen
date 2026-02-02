@@ -10,3 +10,5 @@ Thumbs.db
 *.db
 *.yaml
 resource
+
+node_modules/
