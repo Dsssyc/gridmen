@@ -45,13 +45,12 @@ export default function SchemaCheck({ node, context }: SchemaCheckProps) {
     const loadContext = async () => {
         if (!(node as ResourceNode).lockId) {
             store.get<{ on: Function, off: Function }>('isLoading')!.on()
-            console.log('触发3')
             const linkResponse = await linkNode('gridmen/ISchema/1.0.0', node.nodeInfo, 'r');
             (node as ResourceNode).lockId = linkResponse.lock_id
             store.get<{ on: Function, off: Function }>('isLoading')!.off()
         }
 
-        if ((node as ResourceNode).mountParams === null) {
+        if ((node as ResourceNode).mountParams === undefined) {
             const schemaNode: any = await api.node.getNodeParams(node.nodeInfo);
             (node as ResourceNode).mountParams = schemaNode
             const parsed = JSON.parse(schemaNode.mount_params) as SchemaData

@@ -1,16 +1,18 @@
+import { useCallback, useEffect, useReducer, useRef } from "react"
 import {
-    SplinePointer,
-    Pencil,
-    Trash2,
+    Dot,
     Undo2,
     Redo2,
-    MousePointer,
-    Dot,
     Minus,
-    Square,
     Globe,
+    Pencil,
+    Square,
+    Trash2,
     Palette,
+    MousePointer,
+    SplinePointer,
 } from "lucide-react"
+import { toast } from "sonner"
 import {
     Select,
     SelectItem,
@@ -18,21 +20,19 @@ import {
     SelectContent,
     SelectTrigger,
 } from "@/components/ui/select"
+import store from "@/store/store"
+import * as api from "../api/apis"
+import { linkNode } from "../api/node"
+import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
+import { ResourceNode } from "../scene/scene"
+import { vectorColorMap } from "@/utils/utils"
+import { Button } from "@/components/ui/button"
 import type { IResourceNode } from "../scene/iscene"
+import { MapViewContext } from "@/views/mapView/mapView"
 import type { IViewContext } from "@/views/IViewContext"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Button } from "@/components/ui/button"
-import { useCallback, useEffect, useReducer, useRef, useState } from "react"
-import { ResourceNode, ResourceTree } from "../scene/scene"
-import * as api from "../api/apis"
-import { Badge } from "@/components/ui/badge"
-import { MapViewContext } from "@/views/mapView/mapView"
-import { toast } from "sonner"
-import { linkNode } from "../api/node"
-import { useLayerGroupStore, useToolPanelStore } from "@/store/storeSet"
-import { getHexColorByValue, toValidFeatureCollection, vectorColorMap } from "@/utils/utils"
 
 interface VectorEditProps {
     node: IResourceNode
@@ -40,17 +40,16 @@ interface VectorEditProps {
 }
 
 interface PageContext {
-    hasVector: boolean
     drawVector: GeoJSON.FeatureCollection | null
+    drawingMode: 'select' | 'draw'
     vectorData: {
-        type: "point" | "line" | "polygon"
+        type: "Point" | "Line" | "Polygon"
         name: string
         epsg: string
         color: string
     }
+    editedVectorIds: Set<string>
 }
-
-type ToolType = "select" | "draw"
 
 const vectorTips = [
     { tip1: "Fill in the name of the Schema and the EPSG code." },
@@ -59,22 +58,13 @@ const vectorTips = [
     { tip4: "Set the grid size for each level." },
 ]
 
-const guessVectorTypeFromFeatureCollection = (fc: any): "point" | "line" | "polygon" => {
-    const features = Array.isArray(fc?.features) ? fc.features : []
-    const firstGeomType = features?.[0]?.geometry?.type
-    if (firstGeomType === "Point" || firstGeomType === "MultiPoint") return "point"
-    if (firstGeomType === "LineString" || firstGeomType === "MultiLineString") return "line"
-    if (firstGeomType === "Polygon" || firstGeomType === "MultiPolygon") return "polygon"
-    return "polygon"
-}
-
-const getDrawModeByType = (type: "point" | "line" | "polygon") => {
+const getDrawInstanceModeByType = (type: "Point" | "Line" | "Polygon") => {
     switch (type) {
-        case "point":
+        case "Point":
             return "draw_point"
-        case "line":
+        case "Line":
             return "draw_line_string"
-        case "polygon":
+        case "Polygon":
             return "draw_polygon"
         default:
             return "simple_select"
@@ -89,8 +79,6 @@ const getVectorTypeIcon = (type: string) => {
             return <Minus className="w-6 h-6 text-green-500" />
         case "polygon":
             return <Square className="w-6 h-6 text-purple-500" />
-        default:
-            return null
     }
 }
 
@@ -100,18 +88,17 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
     const drawInstance = mapContext.drawInstance!
 
     const pageContext = useRef<PageContext>({
-        hasVector: false,
         drawVector: null,
+        drawingMode: 'select',
         vectorData: {
-            type: "polygon",
+            type: "Polygon",
             name: "",
             epsg: "4326",
             color: "sky-500",
         },
+        editedVectorIds: new Set<string>(),
     })
 
-    const [selectedTool, setSelectedTool] = useState<ToolType>("select")
-    const selectedToolRef = useRef<ToolType>("select")
     const [, triggerRepaint] = useReducer((x) => x + 1, 0)
 
     useEffect(() => {
@@ -122,48 +109,37 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
     }, [])
 
     const loadContext = async () => {
-        pageContext.current.vectorData.name = node.name.split(".")[0]
-
         if (!(node as ResourceNode).lockId) {
-            const linkResponse = await linkNode("gridmen/IVector/1.0.0", node.nodeInfo, "w")
-                ; (node as ResourceNode).lockId = linkResponse.lock_id
+            store.get<{ on: Function, off: Function }>('isLoading')!.on()
+            const linkResponse = await linkNode("gridmen/IVector/1.0.0", node.nodeInfo, "w");
+            (node as ResourceNode).lockId = linkResponse.lock_id
+            store.get<{ on: Function, off: Function }>('isLoading')!.off()
         }
 
-        const lockId = (node as ResourceNode).lockId!
-        const res = await api.vector.getVector(node.nodeInfo, lockId)
-        const data = res.data as any
-
-        const epsg = String(data?.epsg ?? "4326")
-        const color = String(data?.color ?? "sky-500")
-        const featureJson = data?.feature_json
-
-        pageContext.current.vectorData.epsg = epsg?.trim() ? epsg : "4326"
-        pageContext.current.vectorData.color = color
-        pageContext.current.vectorData.type = guessVectorTypeFromFeatureCollection(featureJson)
-
-        if (featureJson?.type === "FeatureCollection") {
-            pageContext.current.drawVector = featureJson
-            pageContext.current.hasVector = Array.isArray(featureJson.features) && featureJson.features.length > 0
+        if ((node as ResourceNode).mountParams === undefined) {
+            const vectorInfo = await api.vector.getVector(node.nodeInfo, (node as ResourceNode).lockId!);
+            (node as ResourceNode).mountParams = vectorInfo.data
         }
 
-        try {
-            if (featureJson) {
-                const hex = getHexColorByValue(pageContext.current.vectorData.color)
-                const valid = toValidFeatureCollection(featureJson, hex)
-                if (valid.features.length > 0) {
-                    drawInstance.add(valid as any)
-                    applyVectorColorToDraw(hex)
-                }
-            }
-        } catch (e) {
-            console.warn("Failed to load vector into draw:", e)
-        }
+        pageContext.current.vectorData.type = (node as ResourceNode).mountParams.feature_json?.features[0]?.geometry.type
+        pageContext.current.vectorData.name = (node as ResourceNode).mountParams.name
+        pageContext.current.vectorData.epsg = (node as ResourceNode).mountParams.epsg
+        pageContext.current.vectorData.color = (node as ResourceNode).mountParams.color
+        pageContext.current.drawVector = (node as ResourceNode).mountParams.feature_json
+
+        pageContext.current.drawVector?.features.forEach((feature) => pageContext.current.editedVectorIds.add(feature.id as string))
+
+        drawInstance.add(pageContext.current.drawVector!);
 
         (node as ResourceNode).context = {
             ...((node as ResourceNode).context ?? {}),
             __cleanup: {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
-                vector: () => drawInstance?.deleteAll(),
+                vectorEdit: () => {
+                    const featureIds = Array.from(pageContext.current.editedVectorIds)
+                    drawInstance.delete(featureIds)
+                    pageContext.current.editedVectorIds.clear()
+                }
             },
         }
 
@@ -171,83 +147,66 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
     }
 
     const unloadContext = () => {
-        // const drawInstance = store.get<MapboxDraw>("mapDraw")
+        if (drawInstance) {
+            (drawInstance as any).changeMode('simple_select');
+        }
+        (node as ResourceNode).context = {
+            ...pageContext.current,
+            __cleanup: {
+                ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
+                vectorEdit: () => {
+                    const featureIds = Array.from(pageContext.current.editedVectorIds)
+                    drawInstance.delete(featureIds)
+                    pageContext.current.editedVectorIds.clear()
+                }
+            },
+        }
 
-        // if (pageContext.current!.hasVector) {
-        //     if (drawInstance) {
-        //         handleSaveVector()
-        //     }
-        // }
+        return
     }
-
-    const setSelectedToolSafe = useCallback((tool: ToolType) => {
-        selectedToolRef.current = tool
-        setSelectedTool(tool)
-    }, [])
-
-    const safeChangeMode = useCallback(
-        (mode: string, modeOptions?: any) => {
-            try {
-                ; (drawInstance as any)?.changeMode?.(mode, modeOptions)
-            } catch (e) {
-                console.warn("Failed to change draw mode:", e)
-            }
-        },
-        [drawInstance]
-    )
-
-    const applyVectorColorToDraw = useCallback(
-        (hexColor: string) => {
-            if (!drawInstance) return
-            const all = drawInstance.getAll()
-            for (const feature of all.features as any[]) {
-                if (!feature?.id) continue
-                drawInstance.setFeatureProperty(feature.id, "user_color", hexColor)
-            }
-        },
-        [drawInstance]
-    )
-
-    const syncDrawVectorFromDraw = useCallback(() => {
-        if (!drawInstance) return
-        const all = drawInstance.getAll()
-        pageContext.current.drawVector = all
-        pageContext.current.hasVector = all.features.length > 0
-        triggerRepaint()
-    }, [drawInstance])
 
     useEffect(() => {
         if (!map || !drawInstance) return
 
         const onCreate = (e: any) => {
-            const hex = getHexColorByValue(pageContext.current.vectorData.color)
-            if (e?.features && Array.isArray(e.features)) {
-                for (const f of e.features) {
-                    if (!f?.id) continue
-                    drawInstance.setFeatureProperty(f.id, "user_color", hex)
+            if (e.features && Array.isArray(e.features)) {
+                for (const feature of e.features) {
+                    if (!feature.id) continue
+                    drawInstance.setFeatureProperty(feature.id, "session_id", node.nodeInfo)
+                    pageContext.current.editedVectorIds.add(feature.id)
                 }
             }
-            syncDrawVectorFromDraw()
+            pageContext.current.drawVector = drawInstance.getAll()
+            triggerRepaint()
 
-            if (selectedToolRef.current === "draw") {
-                const mode = getDrawModeByType(pageContext.current.vectorData.type)
-                setTimeout(() => safeChangeMode(mode), 0)
+            if (pageContext.current.drawingMode === "draw") {
+                const drawInstanceMode = getDrawInstanceModeByType(pageContext.current.vectorData.type);
+                setTimeout(() => (drawInstance as any).changeMode(drawInstanceMode), 0)
             }
         }
 
         const onUpdate = (e: any) => {
-            const hex = getHexColorByValue(pageContext.current.vectorData.color)
-            if (e?.features && Array.isArray(e.features)) {
-                for (const f of e.features) {
-                    if (!f?.id) continue
-                    drawInstance.setFeatureProperty(f.id, "user_color", hex)
+            if (e.features && Array.isArray(e.features)) {
+                for (const feature of e.features) {
+                    if (!feature.id) continue
+                    if (!drawInstance.get(feature.id)?.properties?.session_id) {
+                        drawInstance.setFeatureProperty(feature.id, "session_id", node.nodeInfo)
+                        pageContext.current.editedVectorIds.add(feature.id)
+                    }
                 }
             }
-            syncDrawVectorFromDraw()
+            pageContext.current.drawVector = drawInstance.getAll()
+            triggerRepaint()
         }
 
-        const onDelete = () => {
-            syncDrawVectorFromDraw()
+        const onDelete = (e: any) => {
+            if (e.features && Array.isArray(e.features)) {
+                for (const feature of e.features) {
+                    if (feature.id) {
+                        pageContext.current.editedVectorIds.delete(feature.id)
+                    }
+                }
+            }
         }
 
         map.on("draw.create", onCreate)
@@ -259,28 +218,30 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
             map.off("draw.update", onUpdate)
             map.off("draw.delete", onDelete)
         }
-    }, [drawInstance, map, safeChangeMode, syncDrawVectorFromDraw])
+    }, [drawInstance, map])
 
-    const handleClickDraw = useCallback(() => {
-        setSelectedToolSafe("draw")
-        const mode = getDrawModeByType(pageContext.current.vectorData.type)
-        safeChangeMode(mode)
-    }, [safeChangeMode, setSelectedToolSafe])
+    const handleClickDraw = () => {
+        pageContext.current.drawingMode = "draw"
+        const drawInstanceMode = getDrawInstanceModeByType(pageContext.current.vectorData.type);
+        (drawInstance as any).changeMode(drawInstanceMode)
 
-    const handleClickSelect = useCallback(() => {
-        setSelectedToolSafe("select")
-        safeChangeMode("simple_select")
-    }, [safeChangeMode, setSelectedToolSafe])
+        triggerRepaint()
+    }
+
+    const handleClickSelect = () => {
+        pageContext.current.drawingMode = "select";
+        (drawInstance as any).changeMode('simple_select')
+
+        triggerRepaint()
+    }
 
     const handleDeleteSelected = useCallback(() => {
-        if (selectedToolRef.current !== "select") return
-        try {
-            ; (drawInstance as any)?.trash?.()
-        } catch (e) {
-            console.warn("Failed to delete selected features:", e)
-        }
-        syncDrawVectorFromDraw()
-    }, [drawInstance, syncDrawVectorFromDraw])
+        if (pageContext.current.drawingMode !== "select") return
+        (drawInstance as any)?.trash?.()
+
+        pageContext.current.drawVector = drawInstance.getAll()
+        triggerRepaint()
+    }, [drawInstance])
 
     useEffect(() => {
         const isEditableTarget = (target: EventTarget | null) => {
@@ -315,7 +276,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
 
         window.addEventListener("keydown", handleKeyDown)
         return () => window.removeEventListener("keydown", handleKeyDown)
-    }, [handleClickDraw, handleClickSelect, handleDeleteSelected])
+    }, [handleClickSelect, handleDeleteSelected])
 
     const handleUpdateVector = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault()
@@ -332,43 +293,24 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
             return
         }
 
-        const rawFeatureJson = drawInstance.getAll()
-        const hex = getHexColorByValue(pageContext.current.vectorData.color)
-
-        const featureJson = toValidFeatureCollection(rawFeatureJson, hex)
         const updateData = {
             color: pageContext.current.vectorData.color,
             epsg: pageContext.current.vectorData.epsg,
-            feature_json: featureJson as any,
+            feature_json: pageContext.current.drawVector!,
         }
 
-        setSelectedToolSafe('select')
-        safeChangeMode('simple_select')
-
-        // drawInstance.deleteAll()
-        // pageContext.current.drawVector = null
-        // pageContext.current.hasVector = false
-        // triggerRepaint()
+        pageContext.current.drawingMode = 'select';
+        (drawInstance as any).changeMode('simple_select')
 
         try {
             await api.vector.updateVector(node.nodeInfo, lockId, updateData)
-
-            // node.isTemp = false
-            //     ; (node as ResourceNode).tree.tempNodeExist = false
-            //     ; (node.tree as ResourceTree).selectedNode = null
-            //     ; (node.tree as ResourceTree).notifyDomUpdate()
-
-            // const { isEditMode } = useLayerGroupStore.getState()
-            // useToolPanelStore.getState().setActiveTab(isEditMode ? 'edit' : 'check')
-
-            // await (node.tree as ResourceTree).refresh()
-
             toast.success("Vector updated successfully")
         } catch (error) {
             console.error("Failed to update vector:", error)
             toast.error(`Failed to update vector: ${error}`)
         }
-    }, [drawInstance, node, safeChangeMode, setSelectedToolSafe])
+        triggerRepaint()
+    }, [drawInstance, node])
 
     return (
         <div className="w-full h-full flex flex-col">
@@ -406,7 +348,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                                 <div className="grid grid-cols-2 gap-2">
                                     <button
                                         onClick={handleClickDraw}
-                                        className={`${selectedTool === "draw"
+                                        className={`${pageContext.current.drawingMode === "draw"
                                             ? "bg-orange-500 hover:bg-orange-600"
                                             : "bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600"}
                                                 text-white px-4 py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-all cursor-pointer`}
@@ -417,7 +359,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                                     </button>
                                     <button
                                         onClick={handleClickSelect}
-                                        className={`${selectedTool === "select"
+                                        className={`${pageContext.current.drawingMode === "select"
                                             ? "bg-orange-500 hover:bg-orange-600"
                                             : "bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600"}
                                                 text-white px-4 py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-all cursor-pointer`}
@@ -444,8 +386,8 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                                     </button>
                                     <button
                                         onClick={handleDeleteSelected}
-                                        disabled={selectedTool !== "select"}
-                                        className={`${selectedTool === "select"
+                                        disabled={pageContext.current.drawingMode !== "select"}
+                                        className={`${pageContext.current.drawingMode === "select"
                                             ? "bg-red-500 hover:bg-red-600 cursor-pointer"
                                             : "bg-slate-700/50 border border-slate-600 opacity-50 cursor-not-allowed"}
                                                 text-white px-2 py-1 rounded-lg font-medium flex flex-col items-center justify-center gap-0.5 transition-all`}
@@ -508,7 +450,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                                         value={pageContext.current.vectorData.color}
                                         onValueChange={(value: any) => {
                                             pageContext.current.vectorData.color = value
-                                            applyVectorColorToDraw(getHexColorByValue(value))
+                                            // applyVectorColorToDraw(getHexColorByValue(value))
                                             triggerRepaint()
                                         }}
                                     >
@@ -572,7 +514,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                     <div className="text-sm w-full flex flex-row items-center justify-center px-4">
                         <Button
                             className="w-full bg-green-500 hover:bg-green-600 text-white cursor-pointer"
-                            disabled={!pageContext.current.vectorData.epsg.trim()}
+                            disabled={!pageContext.current.vectorData.epsg}
                             onClick={handleUpdateVector}
                         >
                             Save Changes

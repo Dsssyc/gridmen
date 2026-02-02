@@ -257,9 +257,9 @@ const MapContainer = forwardRef<HTMLDivElement, MapContainerProps>(({ onMapLoad,
             initializedRef.current = false
 
             const currentMap = useMapStore.getState().map
-            if (currentMap) {
-                currentMap.off('draw.create', handleDrawCreate)
-            }
+            // if (currentMap) {
+            //     currentMap.off('draw.create', handleDrawCreate)
+            // }
 
             if (resizer && currentMapWrapper) {
                 resizer.unobserve(currentMapWrapper)
@@ -303,15 +303,15 @@ export default function MapViewComponent({ templateName = 'default', selectedNod
             direction="horizontal"
             className="h-full w-full text-white "
         >
-            <ResizablePanel defaultSize={14}>
+            <ResizablePanel defaultSize={13}>
                 <LayerGroup getResourceNodeByKey={getResourceNodeByKey} />
             </ResizablePanel>
             <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={61}>
+            <ResizablePanel defaultSize={60}>
                 <MapContainer onMapLoad={handleMapLoad} onDrawReady={handleDrawReady} />
             </ResizablePanel>
             <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={25}>
+            <ResizablePanel defaultSize={27}>
                 <ToolPanel
                     viewModels={viewModels}
                     mapContainer={mapInstance}

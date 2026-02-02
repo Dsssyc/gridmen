@@ -25,6 +25,7 @@ import { useLayerGroupStore, useToolPanelStore } from "@/store/storeSet"
 import { addMapPatchBounds, clearMapPatchBounds, cn, convertBoundsCoordinates } from '@/utils/utils'
 import { Fullscreen, GripVertical, MapPin, RotateCcw, Square, SquaresUnite, Upload, X } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import store from "@/store/store"
 
 interface GridCreationProps {
     node: IResourceNode
@@ -547,11 +548,6 @@ export default function GridCreation({ node, context }: GridCreationProps) {
     }
 
     const handleAssemblyClick = () => {
-        // if (pageContext.current.demFilePath === null && pageContext.current.lumFilePath === null) {
-        //     toast.error("Please upload DEM or LUM files before creating the grid")
-        //     return
-        // }
-
         if (pageContext.current.patchMap.size > 1) {
             toast.error("Please delete patches with different schemas before creating the grid")
             return
@@ -594,27 +590,34 @@ export default function GridCreation({ node, context }: GridCreationProps) {
             vector: vectorData,
         }
 
-        console.log('gridData', gridData)
+        try {
+            store.get<{ on: Function, off: Function }>('isLoading')!.on()
+            await api.node.mountNode({
+                nodeInfo: node.nodeInfo,
+                templateName: 'grid',
+                mountParamsString: JSON.stringify(gridData),
+            })
 
-        await api.node.mountNode({
-            nodeInfo: node.nodeInfo,
-            templateName: 'grid',
-            mountParamsString: JSON.stringify(gridData),
-        })
+            handlePatchReset()
+            handleVectorReset()
 
-        handlePatchReset()
-        handleVectorReset()
+            node.isTemp = false
+                ; (node as ResourceNode).tree.tempNodeExist = false
+                ; (node.tree as ResourceTree).selectedNode = null
+                ; (node.tree as ResourceTree).notifyDomUpdate()
 
-        node.isTemp = false
-            ; (node as ResourceNode).tree.tempNodeExist = false
-            ; (node.tree as ResourceTree).selectedNode = null
-            ; (node.tree as ResourceTree).notifyDomUpdate()
+            const { isEditMode } = useLayerGroupStore.getState()
+            useToolPanelStore.getState().setActiveTab(isEditMode ? 'edit' : 'check')
 
-        const { isEditMode } = useLayerGroupStore.getState()
-        useToolPanelStore.getState().setActiveTab(isEditMode ? 'edit' : 'check')
 
-        await (node.tree as ResourceTree).refresh()
-        toast.success('Patch Created successfully')
+            await (node.tree as ResourceTree).refresh()
+            toast.success('Patch Created successfully')
+        } catch (error) {
+            toast.error('Failed to create grid: ' + (error as Error).message)
+            return
+        } finally {
+            store.get<{ on: Function, off: Function }>('isLoading')!.off()
+        }
     }
 
     return (

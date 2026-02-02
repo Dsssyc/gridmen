@@ -11,6 +11,7 @@ import { useLayerStore, useSelectedNodeStore, useToolPanelStore } from "@/store/
 import * as api from '../api/apis'
 import { linkNode } from "../api/node";
 import { toast } from "sonner";
+import store from "@/store/store";
 
 enum VectorMenuItem {
     CREATE_VECTOR = 'Create Vector',
@@ -54,7 +55,6 @@ export default class VectorTemplate implements ITemplate {
                     <Info className='w-4 h-4' />
                     <span>Check</span>
                 </ContextMenuItem>)}
-
                 {(node as ResourceNode).tree.leadIP === undefined && (
                     <>
                         {!node.isTemp && (
@@ -80,40 +80,47 @@ export default class VectorTemplate implements ITemplate {
                 break
             case VectorMenuItem.CHECK_VECTOR: {
                 if (!(node as ResourceNode).lockId) {
+                    store.get<{ on: Function, off: Function }>('isLoading')!.on()
                     const linkResponse = await linkNode('gridmen/IVector/1.0.0', node.nodeInfo, 'r');
                     (node as ResourceNode).lockId = linkResponse.lock_id
+                    store.get<{ on: Function, off: Function }>('isLoading')!.off()
                 }
-                const vectorInfo = await api.vector.getVector(node.nodeInfo, (node as ResourceNode).lockId!);
-                (node as ResourceNode).mountParams = vectorInfo
+                if ((node as ResourceNode).mountParams === undefined) {
+                    const vectorInfo = await api.vector.getVector(node.nodeInfo, (node as ResourceNode).lockId!);
+                    (node as ResourceNode).mountParams = vectorInfo.data
+                }
                 useLayerStore.getState().addNodeToLayerGroup(node as ResourceNode)
             }
                 break
             case VectorMenuItem.EDIT_VECTOR: {
                 if (!(node as ResourceNode).lockId) {
+                    store.get<{ on: Function, off: Function }>('isLoading')!.on()
                     const linkResponse = await linkNode('gridmen/IVector/1.0.0', node.nodeInfo, 'w');
                     (node as ResourceNode).lockId = linkResponse.lock_id
+                    store.get<{ on: Function, off: Function }>('isLoading')!.off()
                 }
-                const vectorInfo = await api.vector.getVector(node.nodeInfo, (node as ResourceNode).lockId!);
-                (node as ResourceNode).mountParams = vectorInfo
+                if ((node as ResourceNode).mountParams === undefined) {
+                    const vectorInfo = await api.vector.getVector(node.nodeInfo, (node as ResourceNode).lockId!);
+                    (node as ResourceNode).mountParams = vectorInfo.data
+                }
                 useLayerStore.getState().addNodeToLayerGroup(node as ResourceNode)
             }
                 break
-            case VectorMenuItem.DELETE_VECTOR:
-                {
-                    if (node.isTemp) {
-                        ; (node as ResourceNode).tree.tempNodeExist = false
-                        await (node.tree as ResourceTree).removeNode(node)
-                        useSelectedNodeStore.getState().setSelectedNodeKey('.')
-                        await (node as ResourceNode).close()
-                        toast.success(`Vector ${node.name} deleted successfully`)
-                        return
-                    }
-
-                    await api.node.unmountNode(node.key)
-                    toast.success(`Vector ${node.name} deleted successfully`)
+            case VectorMenuItem.DELETE_VECTOR: {
+                if (node.isTemp) {
+                    ; (node as ResourceNode).tree.tempNodeExist = false
+                    await (node.tree as ResourceTree).removeNode(node)
                     useSelectedNodeStore.getState().setSelectedNodeKey('.')
-                    await (node.tree as ResourceTree).refresh()
+                    await (node as ResourceNode).close()
+                    toast.success(`Vector ${node.name} deleted successfully`)
+                    return
                 }
+
+                await api.node.unmountNode(node.key)
+                toast.success(`Vector ${node.name} deleted successfully`)
+                useSelectedNodeStore.getState().setSelectedNodeKey('.')
+                await (node.tree as ResourceTree).refresh()
+            }
                 break
         }
     }

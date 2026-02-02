@@ -16,6 +16,7 @@ import { useLayerGroupStore, useToolPanelStore } from '@/store/storeSet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dot, Globe, Minus, MousePointer, Palette, Pencil, Redo2, SplinePointer, Square, Trash2, Undo2 } from 'lucide-react'
+import store from '@/store/store'
 
 interface VectorCreationProps {
     node: IResourceNode
@@ -26,6 +27,7 @@ interface PageContext {
     hasVector: boolean
     drawVector: GeoJSON.FeatureCollection | null
     tabState: "draw" | "upload"
+    drawingMode: "draw" | "select" | null
     pendingType: "point" | "line" | "polygon"
     vectorData: {
         name: string
@@ -52,6 +54,7 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
         hasVector: false,
         drawVector: null,
         tabState: "draw",
+        drawingMode: null,
         pendingType: "point",
         vectorData: {
             name: "",
@@ -63,10 +66,10 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
         createdVectorIds: new Set<string>(),
     })
 
-    const [drawingMode, setDrawingMode] = useState<"draw" | "select" | null>(null)
     const [, triggerRepaint] = useReducer(x => x + 1, 0)
 
     useEffect(() => {
+        triggerRepaint()
         loadContext()
 
         return () => {
@@ -75,21 +78,18 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
     }, [])
 
     const loadContext = async () => {
-        console.log('has map', map, 'drawInstance', drawInstance)
-
-
         if ((node as ResourceNode).context !== undefined) {
             pageContext.current = { ...(node as ResourceNode).context }
         } else {
             pageContext.current.vectorData.name = node.name.split('.')[0]
         }
 
-        await waitForMapLoad(map)
+        // await waitForMapLoad(map)
         await waitForDrawInstanceLoad(drawInstance)
 
         if (pageContext.current.hasVector) {
             (drawInstance as any).changeMode(getDrawInstanceModeByType(pageContext.current.pendingType))
-            setDrawingMode("draw")
+            pageContext.current.drawingMode = "draw"
         }
 
         (node as ResourceNode).context = {
@@ -103,7 +103,6 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                 }
             },
         }
-
 
         triggerRepaint()
     }
@@ -141,7 +140,7 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
             pageContext.current.drawVector = drawInstance.getAll()
             triggerRepaint()
 
-            if (drawingMode === "draw") {
+            if (pageContext.current.drawingMode === "draw") {
                 const drawInstanceMode = getDrawInstanceModeByType(pageContext.current.pendingType)
                 setTimeout(() => (drawInstance as any).changeMode(drawInstanceMode), 0)
             }
@@ -223,7 +222,7 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
             (drawInstance as any).changeMode(drawInstanceMode)
 
             pageContext.current.hasVector = true
-            setDrawingMode("draw")
+            pageContext.current.drawingMode = "draw"
         } else if (pageContext.current.tabState === "upload") {
             if (!pageContext.current.vectorFilePath) {
                 toast.error('Please select a shapefile path before creating the vector.')
@@ -265,18 +264,49 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
     }
 
     const handleClickDraw = () => {
-        setDrawingMode("draw")
+        pageContext.current.drawingMode = "draw"
         const drawInstanceMode = getDrawInstanceModeByType(pageContext.current.pendingType);
         (drawInstance as any).changeMode(drawInstanceMode)
+
+        triggerRepaint()
     }
 
     const handleClickSelect = () => {
-        setDrawingMode("select");
+        pageContext.current.drawingMode = "select";
         (drawInstance as any).changeMode('simple_select')
+
+        triggerRepaint()
     }
 
     const handleClickDelete = () => {
 
+        let selectedIds: string[] = []
+
+        selectedIds = ((drawInstance as any).getSelectedIds() as any[]).filter(Boolean).map(String)
+
+        if (selectedIds.length === 0) {
+            toast.info('No feature selected.')
+            return
+        }
+
+        const deletableIds = selectedIds.filter((id) => {
+            if (pageContext.current.createdVectorIds.has(id)) return true
+            const props: any = (drawInstance.get(id) as any)?.properties ?? {}
+            return props?.session_id === node.nodeInfo
+        })
+
+        if (deletableIds.length === 0) {
+            toast.warning('Selected features do not belong to this vector.')
+            return
+        }
+
+        ; (drawInstance as any).delete(deletableIds)
+        for (const id of deletableIds) {
+            pageContext.current.createdVectorIds.delete(id)
+        }
+
+        pageContext.current.drawVector = drawInstance.getAll()
+        triggerRepaint()
     }
 
     const handleCreateVector = async () => {
@@ -289,6 +319,8 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
         const featureJson = drawInstance.getAll();
 
         try {
+            store.get<{ on: Function, off: Function }>('isLoading')!.on()
+
             await api.node.mountNode({
                 nodeInfo: node.nodeInfo,
                 templateName: 'vector',
@@ -316,6 +348,8 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
         } catch (error) {
             toast.error('Failed to create vector: ' + (error as Error).message)
             return
+        } finally {
+            store.get<{ on: Function, off: Function }>('isLoading')!.off()
         }
 
     }
@@ -356,7 +390,7 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                                 <div className="grid grid-cols-2 gap-2">
                                     <button
                                         onClick={handleClickDraw}
-                                        className={`${drawingMode === "draw"
+                                        className={`${pageContext.current.drawingMode === "draw"
                                             ? "bg-orange-500 hover:bg-orange-600"
                                             : "bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600"}
                                                 text-white px-4 py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-all cursor-pointer`}
@@ -367,7 +401,7 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                                     </button>
                                     <button
                                         onClick={handleClickSelect}
-                                        className={`${drawingMode === "select"
+                                        className={`${pageContext.current.drawingMode === "select"
                                             ? "bg-orange-500 hover:bg-orange-600"
                                             : "bg-slate-700/50 hover:bg-slate-600/50 border border-slate-600"}
                                                 text-white px-4 py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-all cursor-pointer`}
@@ -394,8 +428,8 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                                     </button>
                                     <button
                                         onClick={handleClickDelete}
-                                        disabled={drawingMode !== "select"}
-                                        className={`${drawingMode === "select"
+                                        disabled={pageContext.current.drawingMode !== "select"}
+                                        className={`${pageContext.current.drawingMode === "select"
                                             ? "bg-red-500 hover:bg-red-600 cursor-pointer"
                                             : "bg-slate-700/50 border border-slate-600 opacity-50 cursor-not-allowed"}
                                                 text-white px-2 py-1 rounded-lg font-medium flex flex-col items-center justify-center gap-0.5 transition-all`}

@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ChevronDown, ChevronRight, Eye, EyeOff, Layers, Trash2, GripVertical, MapPin, Square, MapPinned, PencilRuler, SquaresUnite, SplinePointer } from "lucide-react"
+import { ChevronDown, ChevronRight, Eye, EyeOff, Layers, Trash2, GripVertical, MapPin, Square, MapPinned, SquaresUnite, SplinePointer } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/utils/utils"
@@ -370,7 +370,7 @@ export default function LayerGroup({ getResourceNodeByKey }: LayerGroupProps) {
                     onDragStart={(e) => !isResourceNode && handleLayerDragStart(e, layer.id)}
                     onDragEnd={handleDragEnd}
                     className={cn(
-                        "group flex items-center gap-0.5 px-1.5 py-1 hover:bg-white/5 transition-colors relative cursor-pointer",
+                        "group flex items-center gap-1 px-1.5 py-1 hover:bg-white/5 transition-colors relative cursor-pointer",
                         depth > 0 && "ml-4",
                         isDragOver && dropPosition === 'inside' && "bg-blue-500/20 border border-blue-400 border-dashed",
                         isDragging && "opacity-50"
@@ -387,21 +387,19 @@ export default function LayerGroup({ getResourceNodeByKey }: LayerGroupProps) {
                     }}
                 >
                     {/* Expand/Collapse Icon */}
-                    {hasChildren && (
-                        <div className="w-4 h-4 flex items-center justify-center">
-                            <button onClick={() => toggleExpanded(layer.id)} className="hover:bg-white/10 rounded cursor-pointer">
-                                {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
-                            </button>
-                        </div>
-                    )}
+                    <div className="w-4 h-4 flex items-center justify-center">
+                        <button onClick={() => toggleExpanded(layer.id)} className="hover:bg-white/10 rounded cursor-pointer">
+                            {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+                        </button>
+                    </div>
 
                     {/* Visibility Toggle */}
-                    <button
+                    {/* <button
                         onClick={() => toggleVisibility(layer.id)}
                         className="w-5 h-5 flex items-center justify-center hover:bg-white/10 rounded cursor-pointer"
                     >
                         {layer.visible ? <Eye className="w-4 h-4 text-sky-500" /> : <EyeOff className="w-4 h-4 text-gray-500" />}
-                    </button>
+                    </button> */}
 
                     {/* Layer Icon */}
                     <div className="w-4 h-4 flex items-center justify-center">
@@ -416,13 +414,13 @@ export default function LayerGroup({ getResourceNodeByKey }: LayerGroupProps) {
                     {/* Drag Handle */}
                     {!isResourceNode && layer.visible && (
                         <div className="flex opacity-0 group-hover:opacity-100 transition-opacity gap-1 mr-1">
-                            <MapPinned
+                            {/* <MapPinned
                                 className="w-4 h-4 text-gray-500 cursor-pointer hover:text-sky-500"
                                 onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
                                 }}
-                            />
+                            /> */}
                             <Trash2
                                 className="w-4 h-4 text-gray-500 cursor-pointer hover:text-red-500"
                                 onClick={(e) => {

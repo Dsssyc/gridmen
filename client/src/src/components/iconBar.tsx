@@ -1,6 +1,7 @@
 import { ICON_REGISTRY } from '@/registry/iconRegistry'
 import { cn } from '@/utils/utils'
 import { LucideProps } from 'lucide-react'
+import { useState } from 'react'
 
 export interface IconBarClickHandlers {
     [iconID: string]: (iconID: string) => void
@@ -20,6 +21,8 @@ export interface IconEntry {
 }
 
 export default function IconBar({ currentActiveId, clickHandlers, isLoggedIn = false }: IconBarProps) {
+    const [, triggerRepaint] = useState(0)
+
     return (
         <div className='w-[2%] h-full bg-[#333333] flex flex-col items-center py-2'>
             {ICON_REGISTRY.map(item => (
@@ -29,9 +32,9 @@ export default function IconBar({ currentActiveId, clickHandlers, isLoggedIn = f
                     key={item.id}
                     title={item.label}
                     onClick={() => {
-                        // 禁用未登录时对 map 和 table 的点击
                         if (!isLoggedIn && (item.id === 'map-view' || item.id === 'table-view')) return
                         clickHandlers[item.id] && clickHandlers[item.id](item.id)
+                        triggerRepaint(x => x + 1)
                     }}
                     disabled={!isLoggedIn && (item.id === 'map-view' || item.id === 'table-view')}
                     className={

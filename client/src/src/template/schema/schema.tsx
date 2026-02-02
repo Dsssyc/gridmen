@@ -72,7 +72,6 @@ export default class SchemaTemplate implements ITemplate {
     }
 
     async handleMenuOpen(node: IResourceNode, menuItem: any): Promise<void> {
-        console.log('SchemaTemplate handleMenuOpen', menuItem)
         switch (menuItem) {
             case SchemaMenuItem.CREATE_SCHEMA:
                 useToolPanelStore.getState().setActiveTab('create')
