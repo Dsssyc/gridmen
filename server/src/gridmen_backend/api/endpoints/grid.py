@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/grid', tags=['grid-related apis'])
 
 @router.post('/export', response_model=BaseResponse)
-def export_grid_topo(GridExportRequest):
-    node_key = GridExportRequest.node_key
-    target_path = Path(GridExportRequest.target_path)
+def export_grid_topo(req: GridExportRequest):
+    node_key = req.node_key
+    target_path = Path(req.target_path)
     
     if not target_path.exists():
         raise HTTPException(status_code=400, detail=f'Target path {target_path} does not exist')
