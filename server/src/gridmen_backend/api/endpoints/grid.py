@@ -1,4 +1,6 @@
+import os
 import json
+import shutil
 import logging
 from functools import lru_cache
 from pathlib import Path
@@ -8,6 +10,7 @@ from fastapi.responses import FileResponse
 
 from ...core import settings
 from ...schemas.base import BaseResponse
+from ...schemas.grid import GridExportRequest
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +18,38 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/grid', tags=['grid-related apis'])
 
+@router.post('/export', response_model=BaseResponse)
+def export_grid_topo(GridExportRequest):
+    node_key = GridExportRequest.node_key
+    target_path = Path(GridExportRequest.target_path)
+    
+    if not target_path.exists():
+        raise HTTPException(status_code=400, detail=f'Target path {target_path} does not exist')
+    
+    if not noodle.has_node(node_key):
+        raise HTTPException(status_code=404, detail=f'Grid node {node_key} not found')
+    
+    try:
+        rel_path = node_key.strip('.').replace('.', os.sep)
+        grid_resource_dir = Path.cwd() / 'resource' / rel_path
+        ne_src_path = grid_resource_dir / 'ne.txt'
+        ns_src_path = grid_resource_dir / 'ns.txt'
+        ne_path = target_path / 'ne.txt'
+        ns_path = target_path / 'ns.txt'
+        
+        if not ne_src_path.exists() or not ns_src_path.exists():
+            raise FileNotFoundError('Grid topology files not found in the resource directory')
+        
+        # Copy files to target path
+        shutil.copy2(ne_src_path, ne_path)
+        shutil.copy2(ns_src_path, ns_path)
+        return BaseResponse(
+            success=True,
+            message=f'Grid topology exported successfully to {target_path}'
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'Failed to export grid topology: {str(e)}')
 
 @router.get('/info', response_model=BaseResponse)
 def get_grid_info(node_key: str):
