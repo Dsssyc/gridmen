@@ -129,6 +129,12 @@ function FrameworkShell() {
             return key.includes('delete') || key.includes('remove') || key.includes('unmount') || key.includes('unlink')
         })()
 
+        const isExportAction = (() => {
+            if (typeof menuItem !== 'string') return false
+            const key = menuItem.toLowerCase()
+            return key.includes('export')
+        })()
+
         // IMPORTANT: If template action is async (e.g. linkNode -> sets lockId),
         // wait for it before applying selection + switching tabs, so we don't briefly render
         // this node under the previous tab (often 'create') and then jump again.
@@ -137,7 +143,7 @@ function FrameworkShell() {
 
         // Destructive actions shouldn't change selection/tab; selecting the node would
         // briefly render its current tab (often 'create') which looks like a navigation jump.
-        if (isDestructiveAction) {
+        if (isDestructiveAction || isExportAction) {
             if (isThenable) {
                 ; (maybePromise as Promise<void>).catch((err) => {
                     console.error('handleMenuOpen failed:', err)

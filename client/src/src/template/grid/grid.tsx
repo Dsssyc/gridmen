@@ -7,15 +7,17 @@ import GridCreation from "./gridCreation"
 import GridEdit from "./gridEdit"
 import { ITemplate } from "../iTemplate"
 import { ContextMenuContent, ContextMenuItem } from '@/components/ui/context-menu'
-import { Delete, Edit3, FilePlusCorner, Info } from "lucide-react"
+import { CopyPlus, Delete, Edit3, FilePlusCorner, Info } from "lucide-react"
 import { ResourceNode, ResourceTree } from "../scene/scene"
 import { toast } from "sonner"
 import { useLayerStore, useToolPanelStore } from "@/store/storeSet"
+import { exportGridTopo } from "../api/grid"
 
 enum GridMenuItem {
     CREATE_GRID = 'Create Grid',
     CHECK_GRID = 'Check Grid',
     EDIT_GRID = 'Edit Grid',
+    Export_GRID = 'Export Grid',
     DELETE_GRID = 'Delete Grid',
 }
 
@@ -53,6 +55,10 @@ export default class GridTemplate implements ITemplate {
                     <Info className='w-4 h-4' />
                     <span>Check</span>
                 </ContextMenuItem>)}
+                {!node.isTemp && (<ContextMenuItem className='cursor-pointer' onSelect={() => { handleContextMenu(node, GridMenuItem.Export_GRID) }}>
+                    <CopyPlus className='w-4 h-4' />
+                    <span>Export</span>
+                </ContextMenuItem>)}
 
                 {(node as ResourceNode).tree.leadIP === undefined && (
                     <>
@@ -87,6 +93,21 @@ export default class GridTemplate implements ITemplate {
                 const gridInfo = await api.node.getNodeParams(node.nodeInfo)
                     ; (node as ResourceNode).mountParams = gridInfo
                 useLayerStore.getState().addNodeToLayerGroup(node as ResourceNode)
+            }
+                break
+            case GridMenuItem.Export_GRID: {
+                const filePath = await window.electronAPI!.openFolderDialog()
+                if (!filePath) {
+                    toast.error('Failed to select export folder')
+                    return
+                }
+                const exportInfo = await exportGridTopo(node.nodeInfo, filePath)
+
+                if (exportInfo.success) {
+                    toast.success('Grid topology exported successfully')
+                } else {
+                    toast.error(`Failed to export grid topology: ${exportInfo.message}`)
+                }
             }
                 break
             case GridMenuItem.DELETE_GRID:

@@ -117,6 +117,17 @@ ipcMain.handle('dialog:openCsvFile', async () => {
 	return filePaths[0];
 })
 
+ipcMain.handle('dialog:openFolder', async () => {
+	const { canceled, filePaths } = await dialog.showOpenDialog({
+		properties: ['openDirectory'],
+	});
+
+	if (canceled || filePaths.length === 0) {
+		return null;
+	}
+	return filePaths[0];
+})
+
 app.whenReady().then(() => {
 	createWindow();
 
