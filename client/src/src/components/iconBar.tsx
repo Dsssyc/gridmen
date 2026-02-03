@@ -1,7 +1,7 @@
 import { ICON_REGISTRY } from '@/registry/iconRegistry'
 import { cn } from '@/utils/utils'
 import { LucideProps } from 'lucide-react'
-import { useState } from 'react'
+import { useReducer, useRef, useState } from 'react'
 
 export interface IconBarClickHandlers {
     [iconID: string]: (iconID: string) => void
@@ -21,7 +21,7 @@ export interface IconEntry {
 }
 
 export default function IconBar({ currentActiveId, clickHandlers, isLoggedIn = false }: IconBarProps) {
-    const [, triggerRepaint] = useState(0)
+    const [, triggerRepaint] = useReducer(x => x + 1, 0)
 
     return (
         <div className='w-[2%] h-full bg-[#333333] flex flex-col items-center py-2'>
@@ -34,7 +34,7 @@ export default function IconBar({ currentActiveId, clickHandlers, isLoggedIn = f
                     onClick={() => {
                         if (!isLoggedIn && (item.id === 'map-view' || item.id === 'table-view')) return
                         clickHandlers[item.id] && clickHandlers[item.id](item.id)
-                        triggerRepaint(x => x + 1)
+                        triggerRepaint()
                     }}
                     disabled={!isLoggedIn && (item.id === 'map-view' || item.id === 'table-view')}
                     className={

@@ -39,10 +39,6 @@ export const useSelectedNodeStore = create<SelectedNodeStore>((set) => ({
     setSelectedNodeKey: (key: string | null) => set({ selectedNodeKey: key }),
 }))
 
-export const useTempNodeStore = create<TempNewNodeProps>((set) => ({
-    tempNewNodeKey: null,
-    setTempNewNodeKey: (key: string) => set({ tempNewNodeKey: key })
-}))
 
 const DEFAULT_LAYERS: Layer[] = [
     // {

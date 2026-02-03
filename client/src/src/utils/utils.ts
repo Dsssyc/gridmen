@@ -1,10 +1,10 @@
 import proj4 from 'proj4'
 import mapboxgl from 'mapbox-gl'
-import { twMerge } from "tailwind-merge"
-import { clsx, type ClassValue } from "clsx"
-import * as apis from '@/template/api/apis'
-import CustomLayerGroup from '@/views/mapView/topology/customLayerGroup'
 import store from '@/store/store'
+import { twMerge } from "tailwind-merge"
+import * as apis from '@/template/api/apis'
+import { clsx, type ClassValue } from "clsx"
+import CustomLayerGroup from '@/views/mapView/topology/customLayerGroup'
 
 export const vectorColorMap = [
     { value: "sky-500", color: "#0ea5e9", name: "Sky" },
@@ -53,6 +53,8 @@ export const convertPointCoordinate = async (originPoint: [number, number], from
 }
 
 export const waitForMapLoad = (map: mapboxgl.Map) => {
+    console.log('1')
+    console.log(map)
     return new Promise<void>((resolve) => {
         if (map.loaded()) {
             resolve()
@@ -65,6 +67,7 @@ export const waitForMapLoad = (map: mapboxgl.Map) => {
 }
 
 export const waitForDrawInstanceLoad = (drawInstance: any) => {
+    console.log('2')
     return new Promise<void>((resolve) => {
         const checkDraw = () => {
             if (drawInstance && typeof drawInstance.changeMode === 'function') {

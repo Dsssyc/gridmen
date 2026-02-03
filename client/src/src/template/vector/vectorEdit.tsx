@@ -135,7 +135,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
             (node as ResourceNode).mountParams = vectorInfo.data
         }
 
-        console.log('Vector mountParams:', (node as ResourceNode).mountParams);
+        console.log(drawInstance)
 
         pageContext.current.vectorData.type = (node as ResourceNode).mountParams.feature_json?.features[0]?.geometry.type
         pageContext.current.vectorData.name = (node as ResourceNode).mountParams.name
@@ -143,12 +143,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
         pageContext.current.vectorData.color = (node as ResourceNode).mountParams.color
         pageContext.current.drawVector = (node as ResourceNode).mountParams.feature_json
 
-        // TODO：drawVector在修改后应发生改变
-        console.log(pageContext.current.drawVector)
-
         pageContext.current.drawVector?.features.forEach((feature) => pageContext.current.editedVectorIds.add(feature.id as string))
-
-        console.log(pageContext.current.drawVector!)
 
         drawInstance.add(pageContext.current.drawVector!);
 

@@ -25,6 +25,12 @@ interface PatchCheckProps {
     context: IViewContext
 }
 
+interface PageContext {
+    patch: PatchMeta | null
+    topologyLayer: TopologyLayer | null
+    boundsOn4326: [number, number, number, number] | null
+}
+
 const topologyTips = [
     { tip: 'Hold Shift to select/deselect grids with Brush or Box.' },
     { tip: 'Subdivide splits grids; Merge combines.' },
@@ -35,11 +41,13 @@ const topologyTips = [
 export default function PatchCheck({ node, context }: PatchCheckProps) {
     const mapContext = context as MapViewContext
     const map = mapContext.map!
+    const topologyLayerId = `TopologyLayer:${(node as ResourceNode).nodeInfo}`
 
-    const pageContext = useRef<PatchMeta | null>(null)
-    const boundsOn4326 = useRef<[number, number, number, number] | null>(null)
-
-    const [topologyLayer, setTopologyLayer] = useState<TopologyLayer | null>(null)
+    const pageContext = useRef<PageContext>({
+        patch: null,
+        topologyLayer: null,
+        boundsOn4326: null,
+    })
 
     const [, triggerRepaint] = useReducer(x => x + 1, 0)
 
@@ -53,65 +61,39 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
 
     const loadContext = async () => {
         if (!(node as ResourceNode).lockId) {
-            // store.get<{ on: Function, off: Function }>('isLoading')!.on()
+            store.get<{ on: Function, off: Function }>('isLoading')!.on()
             const linkResponse = await linkNode('gridmen/IPatch/1.0.0', node.nodeInfo, 'r');
             (node as ResourceNode).lockId = linkResponse.lock_id
-            // store.get<{ on: Function, off: Function }>('isLoading')!.off()
+            store.get<{ on: Function, off: Function }>('isLoading')!.off()
         }
 
         if ((node as ResourceNode).context !== undefined) {
+            console.log('Restore patch check context from node context')
+            console.log((node as ResourceNode).context)
             pageContext.current = { ...(node as ResourceNode).context.patch }
         }
 
-        if ((node as ResourceNode).mountParams === null) {
+        if ((node as ResourceNode).mountParams === undefined) {
             const patchInfo = await api.patch.getPatchMeta(node.nodeInfo, (node as ResourceNode).lockId!);
             (node as ResourceNode).mountParams = patchInfo
-            pageContext.current = patchInfo
-            boundsOn4326.current = await convertBoundsCoordinates(pageContext.current.bounds, pageContext.current.epsg, 4326)
+            pageContext.current.patch = patchInfo
+            pageContext.current.boundsOn4326 = await convertBoundsCoordinates(pageContext.current.patch.bounds, pageContext.current.patch.epsg, 4326)
         } else {
-            pageContext.current = (node as ResourceNode).mountParams
-            boundsOn4326.current = await convertBoundsCoordinates(pageContext.current!.bounds, pageContext.current!.epsg, 4326)
+            pageContext.current.patch = (node as ResourceNode).mountParams
+            pageContext.current.boundsOn4326 = await convertBoundsCoordinates(pageContext.current.patch!.bounds, pageContext.current.patch!.epsg, 4326)
         }
-
-        // const waitForMapLoad = () => {
-        //     return new Promise<void>((resolve) => {
-        //         if (map.loaded()) {
-        //             resolve()
-        //         } else {
-        //             map.once('load', () => {
-        //                 resolve()
-        //             })
-        //         }
-        //     })
-        // }
 
         await waitForMapLoad(map)
 
-        // const waitForClg = () => {
-        //     return new Promise<CustomLayerGroup>((resolve) => {
-        //         const checkClg = () => {
-        //             const clg = store.get<CustomLayerGroup>('clg')!
-        //             if (clg) {
-        //                 resolve(clg)
-        //             } else {
-        //                 setTimeout(checkClg, 100)
-        //             }
-        //         }
-        //         checkClg()
-        //     })
-        // }
-
         const clg = await waitForCustomLayerGroup()
-
-        const topologyLayerId = `TopologyLayer:${(node as ResourceNode).nodeInfo}`
 
         const gridContext: PatchContext = {
             nodeInfo: node.nodeInfo,
             lockId: (node as ResourceNode).lockId!,
-            srcCS: `EPSG:${pageContext.current!.epsg}`,
+            srcCS: `EPSG:${pageContext.current!.patch!.epsg}`,
             targetCS: 'EPSG:4326',
-            bBox: boundingBox2D(...pageContext.current!.bounds as [number, number, number, number]),
-            rules: pageContext.current!.subdivide_rules
+            bBox: boundingBox2D(...pageContext.current!.patch!.bounds as [number, number, number, number]),
+            rules: pageContext.current!.patch!.subdivide_rules
         }
 
         const gridLayer = getOrCreateTopologyLayer(clg, map, topologyLayerId)
@@ -120,10 +102,11 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
         await ensureTopologyLayerInitialized(gridLayer, map)
 
         gridLayer.patchCore = patchCore
+        pageContext.current.topologyLayer = gridLayer
 
-        setTopologyLayer(gridLayer)
+        // setTopologyLayer(gridLayer)
 
-        map.fitBounds(boundsOn4326.current!, {
+        map.fitBounds(pageContext.current.boundsOn4326!, {
             padding: 200,
             duration: 1000,
         });
@@ -133,15 +116,10 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
             __cleanup: {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
                 topology: () => {
-                    try {
-                        const clg = store.get<CustomLayerGroup>('clg')
-                        clg?.removeLayer(topologyLayerId)
-                    } catch (err) {
-                        console.error('PatchEdit cleanup failed to remove TopologyLayer:', err)
-                    }
-                    map.dragPan.enable()
-                    map.scrollZoom.enable()
-                    if (map.getCanvas()) map.getCanvas().style.cursor = ''
+                    const clg = store.get<CustomLayerGroup>('clg')
+                    clg?.removeLayer(topologyLayerId)
+
+                    pageContext.current.topologyLayer = null
                 },
             },
         }
@@ -158,6 +136,20 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
         // pageContext.current.editingState.select = selectTab
         // pageContext.current.editingState.pick = pickingTab
         // pageContext.current.isChecking = checkSwitchOn
+        (node as ResourceNode).context = {
+            ...pageContext.current,
+            topologyLayerId,
+            __cleanup: {
+                ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
+
+                topology: () => {
+                    const clg = store.get<CustomLayerGroup>('clg')
+                    clg?.removeLayer(topologyLayerId)
+
+                    pageContext.current.topologyLayer = null
+                },
+            }
+        }
     }
 
 
@@ -199,7 +191,7 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
                         <Button
                             className='bg-sky-500 hover:bg-sky-600 h-8 text-white cursor-pointer rounded-sm flex'
                             onClick={() => {
-                                map.fitBounds(boundsOn4326.current!, {
+                                map.fitBounds(pageContext.current.boundsOn4326!, {
                                     padding: 200,
                                     duration: 1000
                                 })
@@ -216,24 +208,24 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
                     <div className='text-sm text-white mt-1 grid gap-1'>
                         <div>
                             <span className='font-bold'>Patch Name: </span>
-                            {pageContext.current?.name}
+                            {pageContext.current?.patch?.name}
                         </div>
                         <div>
                             <span className='font-bold'>Schema: </span>
-                            {pageContext.current?.schema_node_key.split('.').pop()}
+                            {pageContext.current?.patch?.schema_node_key?.split('.').pop()}
                         </div>
                         <div>
                             <span className='font-bold'>EPSG: </span>
-                            {pageContext.current?.epsg}
+                            {pageContext.current?.patch?.epsg}
                         </div>
                         <div className='flex items-start flex-row gap-0.5'>
                             <div className={`font-bold w-[35%]`}>Grid Levels(m): </div>
                             <div className='space-y-1'>
-                                {pageContext.current?.grid_info && (
-                                    pageContext.current?.grid_info.map(
+                                {pageContext.current?.patch?.grid_info && (
+                                    pageContext.current?.patch?.grid_info.map(
                                         (level: number[], index: number) => {
-                                            const color = topologyLayer!.paletteColorList ?
-                                                [topologyLayer!.paletteColorList[(index + 1) * 3], topologyLayer!.paletteColorList[(index + 1) * 3 + 1], topologyLayer!.paletteColorList[(index + 1) * 3 + 2]] : null
+                                            const color = pageContext.current.topologyLayer!.paletteColorList ?
+                                                [pageContext.current.topologyLayer!.paletteColorList[(index + 1) * 3], pageContext.current.topologyLayer!.paletteColorList[(index + 1) * 3 + 1], pageContext.current.topologyLayer!.paletteColorList[(index + 1) * 3 + 2]] : null
                                             const colorStyle = color ? `rgb(${color[0]}, ${color[1]}, ${color[2]})` : undefined
 
                                             return (
@@ -269,7 +261,7 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
                                             <TooltipContent>
                                                 <div className='text-[12px] space-y-1'>
                                                     <p className='font-bold text-blue-500'>North</p>
-                                                    <p>{pageContext.current?.bounds[3].toFixed(6)}</p>
+                                                    <p>{pageContext.current?.patch?.bounds[3]?.toFixed(6)}</p>
                                                 </div>
                                             </TooltipContent>
                                         </Tooltip>
@@ -292,7 +284,7 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
                                             <TooltipContent>
                                                 <div className='text-[12px]'>
                                                     <p className='font-bold mb-1 text-green-500'>West</p>
-                                                    <p>{pageContext.current?.bounds[0].toFixed(6)}</p>
+                                                    <p>{pageContext.current?.patch?.bounds[0]?.toFixed(6)}</p>
                                                 </div>
                                             </TooltipContent>
                                         </Tooltip>
@@ -302,8 +294,8 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
                                 <div className='text-center'>
                                     <span className='font-bold text-[14px] text-orange-500'>Center</span>
                                     <div className='text-[12px]'>
-                                        <div>{pageContext.current && ((pageContext.current?.bounds[0] + pageContext.current?.bounds[2]) / 2).toFixed(6)}</div>
-                                        <div>{pageContext.current && ((pageContext.current?.bounds[1] + pageContext.current?.bounds[3]) / 2).toFixed(6)}</div>
+                                        <div>{pageContext.current?.patch?.bounds && (((pageContext.current.patch.bounds[0] + pageContext.current.patch.bounds[2]) / 2).toFixed(6))}</div>
+                                        <div>{pageContext.current?.patch?.bounds && (((pageContext.current.patch.bounds[1] + pageContext.current.patch.bounds[3]) / 2).toFixed(6))}</div>
                                     </div>
                                 </div>
                                 {/* East/Right */}
@@ -319,7 +311,7 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
                                             <TooltipContent>
                                                 <div className='text-[12px]'>
                                                     <p className='font-bold mb-1 text-red-500'>East</p>
-                                                    <p>{pageContext.current?.bounds[2].toFixed(6)}</p>
+                                                    <p>{pageContext.current?.patch?.bounds[2].toFixed(6)}</p>
                                                 </div>
                                             </TooltipContent>
                                         </Tooltip>
@@ -342,7 +334,7 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
                                             <TooltipContent>
                                                 <div className='text-[12px]'>
                                                     <p className='font-bold mb-1 text-purple-500'>South</p>
-                                                    <p>{pageContext.current?.bounds[1].toFixed(6)}</p>
+                                                    <p>{pageContext.current?.patch?.bounds[1].toFixed(6)}</p>
                                                 </div>
                                             </TooltipContent>
                                         </Tooltip>

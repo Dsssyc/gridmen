@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react"
 import LoginPage from "./loginPage/loginPage"
-import { useSettingStore, useToolPanelStore } from "@/store/storeSet"
+import ResourceTreeComponent from "./resourceTree"
 import SettingView from "./settingView/settingView"
 import { ICON_REGISTRY } from "@/registry/iconRegistry"
 import { IResourceNode } from "@/template/scene/iscene"
 import IconBar, { IconBarClickHandlers } from "./iconBar"
-import ResourceTreeComponent from "./resourceTree"
-import { ResourceNode, ResourceTree } from "@/template/scene/scene"
 import MapViewComponent from "@/views/mapView/mapViewComponent"
+import { ResourceNode, ResourceTree } from "@/template/scene/scene"
 import TableViewComponent from "@/views/tableView/tableViewComponent"
+import { useSelectedNodeStore, useSettingStore, useToolPanelStore } from "@/store/storeSet"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom"
 import Hello from "./helloPage/hello"
@@ -34,7 +34,9 @@ function FrameworkShell() {
     const [privateTree, setPrivateTree] = useState<ResourceTree | null>(null)
     const [publicTree, setPublicTree] = useState<ResourceTree | null>(null)
     const [focusNode, setFocusNode] = useState<IResourceNode | null>(null)
+
     const publicIP = useSettingStore(state => state.publicIP)
+    const { selectedNodeKey, setSelectedNodeKey } = useSelectedNodeStore()
 
     const [, triggerRepaint] = useReducer(x => x + 1, 0)
 
@@ -118,6 +120,7 @@ function FrameworkShell() {
             if (publicTree) publicTree.selectedNode = null
             treeOfNode.selectedNode = node
             treeOfNode.notifyDomUpdate()
+            setSelectedNodeKey(node.key)
         }
 
         const isDestructiveAction = (() => {
@@ -193,7 +196,8 @@ function FrameworkShell() {
         privateTree.selectedNode = null
         publicTree.selectedNode = null
         _node.tree.selectedNode = _node
-    }, [privateTree, publicTree])
+        setSelectedNodeKey(_node.key)
+    }, [privateTree, publicTree, setSelectedNodeKey])
 
     const handleNodeDoubleClick = useCallback((node: IResourceNode) => {
         const _node = node as ResourceNode
@@ -203,8 +207,9 @@ function FrameworkShell() {
         publicTree.selectedNode = null
 
         _node.tree.selectedNode = _node
+        setSelectedNodeKey(_node.key)
 
-    }, [privateTree, publicTree])
+    }, [privateTree, publicTree, setSelectedNodeKey])
 
     useEffect(() => {
         // Only initialize resource trees when actually entering /framework and logged in.
@@ -230,6 +235,24 @@ function FrameworkShell() {
         }
         initTree()
     }, [isLoggedIn, location.pathname, privateTree, publicTree, publicIP])
+
+    useEffect(() => {
+        if (!privateTree || !publicTree || !selectedNodeKey) return
+        if (privateTree.selectedNode || publicTree.selectedNode) return
+
+        const nodeInPrivate = privateTree.scene.get(selectedNodeKey)
+        if (nodeInPrivate) {
+            privateTree.selectedNode = nodeInPrivate
+            privateTree.notifyDomUpdate()
+            return
+        }
+
+        const nodeInPublic = publicTree.scene.get(selectedNodeKey)
+        if (nodeInPublic) {
+            publicTree.selectedNode = nodeInPublic
+            publicTree.notifyDomUpdate()
+        }
+    }, [privateTree, publicTree, selectedNodeKey])
 
     const getCurrentTemplateName = (): string => {
         const selectedNode = privateTree?.selectedNode || publicTree?.selectedNode

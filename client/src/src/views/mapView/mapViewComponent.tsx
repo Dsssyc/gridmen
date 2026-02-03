@@ -97,6 +97,7 @@ const MapContainer = forwardRef<HTMLDivElement, MapContainerProps>(({ onMapLoad,
             initializedRef.current = true
 
             const currentMap = useMapStore.getState().map
+            const currentDraw = useMapStore.getState().drawInstance
 
             if (currentMap) {
                 try {
@@ -112,6 +113,10 @@ const MapContainer = forwardRef<HTMLDivElement, MapContainerProps>(({ onMapLoad,
                 currentMap.resize()
 
                 onMapLoad!(currentMap)
+
+                if (currentDraw) {
+                    onDrawReady!(currentDraw)
+                }
 
                 mapCanvasDebounce(currentMap, 100, currentMapWrapper)
 
