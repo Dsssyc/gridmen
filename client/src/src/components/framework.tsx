@@ -126,13 +126,16 @@ function FrameworkShell() {
         const isDestructiveAction = (() => {
             if (typeof menuItem !== 'string') return false
             const key = menuItem.toLowerCase()
-            return key.includes('delete') || key.includes('remove') || key.includes('unmount') || key.includes('unlink')
+            return key.includes('delete')
         })()
 
-        const isExportAction = (() => {
+        // Actions like "Copy" are operational (open dialog/export/etc) and should NOT
+        // change selection or active ToolPanel tab, otherwise the UI may jump to the
+        // previously active tab (often 'create' => GridCreation).
+        const isNonNavigationalAction = (() => {
             if (typeof menuItem !== 'string') return false
             const key = menuItem.toLowerCase()
-            return key.includes('export')
+            return key.includes('copy') || key.includes('export')
         })()
 
         // IMPORTANT: If template action is async (e.g. linkNode -> sets lockId),
@@ -141,9 +144,9 @@ function FrameworkShell() {
         const maybePromise = node.template?.handleMenuOpen(node, menuItem)
         const isThenable = !!maybePromise && typeof (maybePromise as any).then === 'function'
 
-        // Destructive actions shouldn't change selection/tab; selecting the node would
-        // briefly render its current tab (often 'create') which looks like a navigation jump.
-        if (isDestructiveAction || isExportAction) {
+        // Destructive actions (and non-navigational actions like Copy) shouldn't change selection/tab;
+        // selecting the node would briefly render its current tab (often 'create') which looks like a navigation jump.
+        if (isDestructiveAction || isNonNavigationalAction) {
             if (isThenable) {
                 ; (maybePromise as Promise<void>).catch((err) => {
                     console.error('handleMenuOpen failed:', err)

@@ -1,23 +1,22 @@
-import DefaultTemplate from "../default/default"
+import { toast } from "sonner"
+import GridEdit from "./gridEdit"
 import * as api from '../api/apis'
+import GridCheck from "./gridCheck"
+import { ITemplate } from "../iTemplate"
+import GridCreation from "./gridCreation"
+import { exportGridTopo } from "../api/grid"
 import { IResourceNode } from "../scene/iscene"
 import { IViewContext } from "@/views/IViewContext"
-import GridCheck from "./gridCheck"
-import GridCreation from "./gridCreation"
-import GridEdit from "./gridEdit"
-import { ITemplate } from "../iTemplate"
-import { ContextMenuContent, ContextMenuItem } from '@/components/ui/context-menu'
-import { CopyPlus, Delete, Edit3, FilePlusCorner, Info } from "lucide-react"
 import { ResourceNode, ResourceTree } from "../scene/scene"
-import { toast } from "sonner"
 import { useLayerStore, useToolPanelStore } from "@/store/storeSet"
-import { exportGridTopo } from "../api/grid"
+import { CopyPlus, Delete, Edit3, FilePlusCorner, Info } from "lucide-react"
+import { ContextMenuContent, ContextMenuItem } from '@/components/ui/context-menu'
 
 enum GridMenuItem {
     CREATE_GRID = 'Create Grid',
     CHECK_GRID = 'Check Grid',
     EDIT_GRID = 'Edit Grid',
-    Export_GRID = 'Export Grid',
+    EXPORT_GRID = 'Export Grid',
     DELETE_GRID = 'Delete Grid',
 }
 
@@ -55,18 +54,21 @@ export default class GridTemplate implements ITemplate {
                     <Info className='w-4 h-4' />
                     <span>Check</span>
                 </ContextMenuItem>)}
-                {!node.isTemp && (<ContextMenuItem className='cursor-pointer' onSelect={() => { handleContextMenu(node, GridMenuItem.Export_GRID) }}>
-                    <CopyPlus className='w-4 h-4' />
-                    <span>Export</span>
-                </ContextMenuItem>)}
 
                 {(node as ResourceNode).tree.leadIP === undefined && (
                     <>
                         {!node.isTemp && (
-                            <ContextMenuItem className='cursor-pointer' onSelect={() => { handleContextMenu(node, GridMenuItem.EDIT_GRID) }}>
-                                <Edit3 className='w-4 h-4' />
-                                <span>Edit</span>
-                            </ContextMenuItem>)}
+                            <>
+                                <ContextMenuItem className='cursor-pointer' onSelect={() => { handleContextMenu(node, GridMenuItem.EDIT_GRID) }}>
+                                    <Edit3 className='w-4 h-4' />
+                                    <span>Edit</span>
+                                </ContextMenuItem>
+                                <ContextMenuItem className='cursor-pointer' onSelect={() => { handleContextMenu(node, GridMenuItem.EXPORT_GRID) }}>
+                                    <CopyPlus className='w-4 h-4' />
+                                    <span>Export</span>
+                                </ContextMenuItem>
+                            </>
+                        )}
 
                         < ContextMenuItem className='cursor-pointer flex bg-red-500 hover:!bg-red-600' onSelect={() => { handleContextMenu(node, GridMenuItem.DELETE_GRID) }}>
                             <Delete className='w-4 h-4 text-white rotate-180' />
@@ -95,19 +97,30 @@ export default class GridTemplate implements ITemplate {
                 useLayerStore.getState().addNodeToLayerGroup(node as ResourceNode)
             }
                 break
-            case GridMenuItem.Export_GRID: {
-                const filePath = await window.electronAPI!.openFolderDialog()
-                if (!filePath) {
-                    toast.error('Failed to select export folder')
+            case GridMenuItem.EXPORT_GRID: {
+
+                const api = window.electronAPI
+                if (!api?.openFolderDialog) {
+                    toast.error('Electron folder dialog not available')
                     return
                 }
-                const exportInfo = await exportGridTopo(node.nodeInfo, filePath)
 
-                if (exportInfo.success) {
-                    toast.success('Grid topology exported successfully')
+                const selectedPath = await api.openFolderDialog()
+                if (!selectedPath) return
+
+                // const exportPatch = {
+                //     nodeInfo: node.nodeInfo,
+                //     exportPath: selectedPath
+                // }
+
+                const exportResult = await exportGridTopo(node.nodeInfo, selectedPath)
+                if (exportResult.success) {
+                    toast.success(`Successed export grid to ${selectedPath}`)
                 } else {
-                    toast.error(`Failed to export grid topology: ${exportInfo.message}`)
+                    toast.error(`Failed to export grid: ${exportResult.message}`)
                 }
+
+
             }
                 break
             case GridMenuItem.DELETE_GRID:

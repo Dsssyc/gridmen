@@ -7,7 +7,7 @@ declare global {
             openTiffFileDialog: () => Promise<string | null>,
             openTxtFileDialog: () => Promise<string | null>,
             openInpFileDialog: () => Promise<string | null>,
-            openCsvFileDialog: () => Promise<string | null>
+            openCsvFileDialog: () => Promise<string | null>,
             openFolderDialog: () => Promise<string | null>
         }
     }
