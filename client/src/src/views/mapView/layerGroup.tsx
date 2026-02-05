@@ -493,7 +493,7 @@ export default function LayerGroup({ getResourceNodeByKey }: LayerGroupProps) {
             <div className="px-3 py-2 border-t border-[#2A2C33] text-xs text-gray-500">
                 <div className="flex justify-between">
                     <span>Total Layers: {resourceLayerCount}</span>
-                    <span>CRS: EPSG:4326</span>
+                    <span>CRS: EPSG:3857</span>
                 </div>
             </div>
         </div>
