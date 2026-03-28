@@ -409,58 +409,37 @@ export const adjustPatchBounds = async (
         convertedNE = NE!
     }
 
-    const convertedBounds: [number, number, number, number] = [convertedSW[0], convertedSW[1], convertedNE[0], convertedNE[1]]  //toEPSG
+    const convertedBounds: [number, number, number, number] = [convertedSW[0], convertedSW[1], convertedNE[0], convertedNE[1]]
 
-    // const calcuSW = await convertPointCoordinate([bounds[0], bounds[1]], fromEPSG, 3857)      // 3857
-    // const calcuNE = await convertPointCoordinate([bounds[2], bounds[3]], fromEPSG, 3857)      // 3857
-    const tempCalculatedBounds = [convertedSW![0], convertedSW![1], convertedNE![0], convertedNE![1]]
+    // Notation from the paper:
+    // O_x, O_y       = alignmentOrigin (in toEPSG)
+    // LB_u           = convertedSW / convertedNE (user bounds in toEPSG)
+    // w_r0, h_r0     = gridWidth, gridHeight (root-level cell resolution)
 
-    // const tempCalculatedAlignmentOrigin = await convertPointCoordinate(alignmentOrigin, fromEPSG, 3857)  // 3857
+    const baseX = alignmentOrigin[0] // O_x
+    const baseY = alignmentOrigin[1] // O_y
 
-    // const swX = tempCalculatedBounds[0]
-    // const swY = tempCalculatedBounds[1]
+    // Formula (1): LB_a,x = O_x + floor((LB_u,x - O_x) / w_r0) * w_r0
+    // Formula (2): LB_a,y = O_y + floor((LB_u,y - O_y) / h_r0) * h_r0
+    const alignedSWX = baseX + Math.floor((convertedSW[0] - baseX) / gridWidth) * gridWidth
+    const alignedSWY = baseY + Math.floor((convertedSW[1] - baseY) / gridHeight) * gridHeight
 
-    const swX = convertedSW[0]
-    const swY = convertedSW[1]
+    const alignedBounds: [number, number, number, number] = [
+        alignedSWX, alignedSWY,
+        alignedSWX + (convertedNE[0] - convertedSW[0]),
+        alignedSWY + (convertedNE[1] - convertedSW[1]),
+    ]
 
-    // const baseX = tempCalculatedAlignmentOrigin![0]
-    // const baseY = tempCalculatedAlignmentOrigin![1]
-    const baseX = alignmentOrigin![0]
-    const baseY = alignmentOrigin![1]
+    // Formula (3): w_e = ceil((LB_u,x + w_u - LB_a,x) / w_r0) * w_r0
+    // Formula (4): h_e = ceil((LB_u,y + h_u - LB_a,y) / h_r0) * h_r0
+    const expandedWidth = Math.ceil((convertedNE[0] - alignedSWX) / gridWidth) * gridWidth
+    const expandedHeight = Math.ceil((convertedNE[1] - alignedSWY) / gridHeight) * gridHeight
 
-    const dX = swX - baseX
-    const dY = swY - baseY
-
-    const disX = Math.floor(dX / gridWidth) * gridWidth
-    const disY = Math.floor(dY / gridHeight) * gridHeight
-
-    const offsetX = disX - dX
-    const offsetY = disY - dY
-
-    const rectWidth = tempCalculatedBounds[2] - tempCalculatedBounds[0]
-    const rectHeight = tempCalculatedBounds[3] - tempCalculatedBounds[1]
-
-    const tempAlignSW = [tempCalculatedBounds[0] + offsetX, tempCalculatedBounds[1] + offsetY]
-    const tempAlignNE = [tempAlignSW[0] + rectWidth, tempAlignSW[1] + rectHeight]
-
-    // const alignSW = await convertPointCoordinate([tempAlignSW[0], tempAlignSW[1]], 3857, toEPSG)      // toEPSG
-    // const alignNE = await convertPointCoordinate([tempAlignNE[0], tempAlignNE[1]], 3857, toEPSG)      // toEPSG
-
-    // console.log('alignSW', alignSW)
-    // console.log('alignNE', alignNE)
-
-    const alignedBounds: [number, number, number, number] = [tempAlignSW![0], tempAlignSW![1], tempAlignNE![0], tempAlignNE![1]]  //toEPSG
-
-    const expandedRectWidth = Math.ceil(rectWidth / gridWidth) * gridWidth
-    const expandedRectHeight = Math.ceil(rectHeight / gridHeight) * gridHeight
-
-    const tempExpandSW = tempAlignSW
-    const tempExpandNE = [tempExpandSW[0] + expandedRectWidth, tempExpandSW[1] + expandedRectHeight]
-
-    // const expandSW = await convertPointCoordinate([tempExpandSW[0], tempExpandSW[1]], 3857, toEPSG)      // toEPSG
-    // const expandNE = await convertPointCoordinate([tempExpandNE[0], tempExpandNE[1]], 3857, toEPSG)      // toEPSG
-
-    const expandedBounds: [number, number, number, number] = [tempExpandSW![0], tempExpandSW![1], tempExpandNE![0], tempExpandNE![1]]  //toEPSG
+    const expandedBounds: [number, number, number, number] = [
+        alignedSWX, alignedSWY,
+        alignedSWX + expandedWidth,
+        alignedSWY + expandedHeight,
+    ]
 
     return {
         convertedBounds: convertedBounds,

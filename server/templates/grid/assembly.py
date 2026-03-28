@@ -10,8 +10,10 @@ import multiprocessing as mp
 
 from pathlib import Path
 from enum import IntEnum
+from pynoodle import noodle
 from typing import Callable
-from crms.patch import Patch
+# from crms.patch import Patch
+from icrms.ipatch import IPatch
 from functools import partial
 from rasterio.warp import transform
 
@@ -150,47 +152,40 @@ def _get_all_ancestor_keys(key: bytes, level_info: list[dict[str, int]], subdivi
 
 def _update_cells_by_patch(
     keys: set[bytes],
-    schema_file_path: str, patch_workspace: str,
+    schema_file_path: str, patch_node_key: str,
     meta_bounds: list[float], meta_level_info: list[dict[str, int]]
 ):
-    print('Updating meta grid cells by patch:', patch_workspace)
-    
-    # Create patch crm - Assuming Patch(resource_space) constructor or similar
-    # The user code had Patch(schema_file_path, patch_workspace), adjust if Patch definition changed
-    # Based on previous context, Patch might just need workspace path now if it self-loads schema
-    # But let's keep the user's signature style or adapt based on recent Patch changes
-    # Recent Patch.__init__ signature: def __init__(self, resource_space: str):
-    
-    # ADAPTATION: Use the new Patch signature
-    patch = Patch(patch_workspace) # Assuming it can load schema/meta internally
-    
-    # Calculate bottom-left fraction in meta grid
-    patch_bounds = patch.bounds
-    bl_col_meta_f = (patch_bounds[0] - meta_bounds[0]) / (meta_bounds[2] - meta_bounds[0])
-    bl_row_meta_f = (patch_bounds[1] - meta_bounds[1]) / (meta_bounds[3] - meta_bounds[1])
-    
-    # Get active grid infos from patch and update keys
-    # Assuming patch.get_active_grid_infos() returns (levels, global_ids) arrays
-    levels, global_ids = patch.get_activated_cell_infos()
-    for level, global_id in zip(levels, global_ids):
-        # Meta level info
-        meta_level_cols = meta_level_info[level]['width']
-        meta_level_rows = meta_level_info[level]['height']
+    print('Updating meta grid cells by patch:', patch_node_key)
+    with noodle.connect(IPatch, patch_node_key, 'pr') as patch:
+        meta = patch.get_meta()
+        # Calculate bottom-left fraction in meta grid
+        patch_bounds = meta.bounds
+        bl_col_meta_f = (patch_bounds[0] - meta_bounds[0]) / (meta_bounds[2] - meta_bounds[0])
+        bl_row_meta_f = (patch_bounds[1] - meta_bounds[1]) / (meta_bounds[3] - meta_bounds[1])
         
-        # Patch level info
-        patch_level_cols = patch.level_info[level]['width']
-        
-        # Adjust patch global id to meta grid global id
-        patch_gid_u = global_id % patch_level_cols
-        patch_gid_v = global_id // patch_level_cols
+        # Get active grid infos from patch and update keys
+        # Assuming patch.get_active_grid_infos() returns (levels, global_ids) arrays
+        level_info = patch.get_level_info()
+        levels, global_ids = patch.get_activated_cell_infos()
+        for level, global_id in zip(levels, global_ids):
+            # Meta level info
+            meta_level_cols = meta_level_info[level]['width']
+            meta_level_rows = meta_level_info[level]['height']
+            
+            # Patch level info
+            patch_level_cols = level_info[level]['width']
+            
+            # Adjust patch global id to meta grid global id
+            patch_gid_u = global_id % patch_level_cols
+            patch_gid_v = global_id // patch_level_cols
 
-        meta_gid_u = int(bl_col_meta_f * meta_level_cols + 0.5) + patch_gid_u
-        meta_gid_v = int(bl_row_meta_f * meta_level_rows + 0.5) + patch_gid_v
-        meta_global_id = meta_gid_v * meta_level_cols + meta_gid_u
-        
-        # Encode and add to keys
-        cell_key = _encode_cell_key(level, meta_global_id)
-        keys.add(cell_key)
+            meta_gid_u = int(bl_col_meta_f * meta_level_cols + 0.5) + patch_gid_u
+            meta_gid_v = int(bl_row_meta_f * meta_level_rows + 0.5) + patch_gid_v
+            meta_global_id = meta_gid_v * meta_level_cols + meta_gid_u
+            
+            # Encode and add to keys
+            cell_key = _encode_cell_key(level, meta_global_id)
+            keys.add(cell_key)
      
 def _get_cell_from_uv(level: int, level_cols, level_rows, u: int, v: int, meta_level_info: list[dict[str, int]]) -> tuple[int, int] | None:
     if level >= len(meta_level_info) or level < 0:
@@ -1084,12 +1079,13 @@ def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str]
         activated_cell_keys: set[bytes] = set()
         
         # Update activated cells by each patch
-        for patch_path in patch_paths:
+        for patch_node_key in patch_node_keys:
             _update_cells_by_patch(
                 activated_cell_keys,
-                schema_file_path, patch_path,
+                schema_file_path, patch_node_key,
                 meta_bounds, meta_level_info
             )
+        print(f'All activated cell num: {len(activated_cell_keys)}')
         
         # Filter activated cells to remove conflicts
         # Conflict: if a cell is activated, all its ancestors must be deactivated

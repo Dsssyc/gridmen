@@ -40,7 +40,7 @@ def MOUNT(node_key: str, params: dict | None = None):
         _handle_assembly(assembly_params, node_key, resource_dir)
     
     # Handle vector if present
-    if 'vector' in params:
+    if 'vector' in params and params['vector']:
         _handle_vector_modification(params, resource_dir)
 
 

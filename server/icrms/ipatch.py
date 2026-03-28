@@ -285,6 +285,9 @@ class IPatch:
         """
         ...
     
+    def get_level_info(self) -> list[dict[str, int]]:
+        ...
+    
     def subdivide_cells(self, levels: list[int], global_ids: list[int]) -> tuple[list[int], list[int]]:
         ...
         

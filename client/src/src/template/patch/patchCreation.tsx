@@ -310,8 +310,10 @@ export default function PatchCreation({ node, context }: PatchCreationProps) {
         }
 
         if (pageContext.current.inputBounds && pageContext.current.inputBounds.length === 4 && pageContext.current.schema) {
+            const inputBounds = pageContext.current.inputBounds!
+            const schema = pageContext.current.schema
 
-            const inputBoundsOn4326 = await convertBoundsCoordinates(pageContext.current.inputBounds!, pageContext.current.schema.epsg, 4326)
+            const inputBoundsOn4326 = await convertBoundsCoordinates(inputBounds, schema.epsg, 4326)
 
             if (!inputBoundsOn4326) {
                 toast.error('Failed to convert bounds to EPSG:4326')
@@ -321,8 +323,15 @@ export default function PatchCreation({ node, context }: PatchCreationProps) {
             pageContext.current.originBounds = inputBoundsOn4326
             addMapPatchBounds(map, inputBoundsOn4326, node.key)
 
-            await adjustCoords()
+            // Use exact inputBounds (already in target EPSG) for alignment
+            // to avoid precision loss from the 2326 → 4326 → 2326 round-trip
+            const { convertedBounds, expandedBounds } = await adjustPatchBounds(
+                inputBounds, schema.grid_info[0], schema.epsg, schema.epsg, schema.alignment_origin
+            )
+            pageContext.current.convertedBounds = convertedBounds
+            pageContext.current.adjustedBounds = expandedBounds
 
+            triggerRepaint()
         }
     }
 

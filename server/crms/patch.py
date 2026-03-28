@@ -165,6 +165,9 @@ class Patch:
         schema.alignment_origin = tuple(self.alignment_origin)
         schema.grid_info = [tuple(size) for size in self.grid_info]
         return schema
+    
+    def get_level_info(self) -> list[dict[str, int]]:
+        return self.level_info
 
     def _save(self) -> dict[str, str | bool]:
         patch_save_success = True
