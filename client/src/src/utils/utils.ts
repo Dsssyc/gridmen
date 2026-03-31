@@ -44,7 +44,7 @@ export const convertPointCoordinate = async (originPoint: [number, number], from
             proj4.defs(`EPSG:${toEPSG}`, toEPSGDefs)
         }
 
-        const convertedPoint = proj4(`EPSG:${fromEPSG}`, `EPSG:${toEPSG}`, originPoint)
+        const convertedPoint = proj4(`EPSG:${fromEPSG}`, `EPSG:${toEPSG}`, [originPoint[0], originPoint[1]] as [number, number])
         return convertedPoint
     } catch (error) {
         console.error('Error converting coordinate:', error)
