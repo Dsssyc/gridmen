@@ -65,8 +65,8 @@ class GridCache:
 
         self.fract_coords: list[tuple[list[int], list[int], list[int], list[int]]] = []
 
-        self.edges: list[list[set[int]]] = [[set() for _ in range(4)] for _ in range(self._len)]
-        self.neighbours: list[list[set[int]]] = [[set() for _ in range(4)] for _ in range(self._len)]
+        self.edges: list[list[list[int]]] = [[[] for _ in range(4)] for _ in range(self._len)]
+        self.neighbours: list[list[list[int]]] = [[[] for _ in range(4)] for _ in range(self._len)]
 
     def __len__(self) -> int:
         return self._len
@@ -94,6 +94,26 @@ class GridCache:
             raise IndexError('Index out of bounds')
         end_index = min(start_index + length, self._len)
         return self.edges[start_index : end_index]
+
+    def compact_neighbours(self):
+        """Deduplicate and sort all neighbour lists in place."""
+        for i in range(self._len):
+            for d in range(4):
+                lst = self.neighbours[i][d]
+                if lst:
+                    self.neighbours[i][d] = sorted(set(lst))
+
+    def compact_edges(self):
+        """Deduplicate and sort all edge lists in place."""
+        for i in range(self._len):
+            for d in range(4):
+                lst = self.edges[i][d]
+                if lst:
+                    self.edges[i][d] = sorted(set(lst))
+
+    def free_neighbours(self):
+        """Free neighbour data after it is no longer needed."""
+        self.neighbours = None
 
 def _encode_cell_key(level: int, global_id: int) -> bytes:
     return struct.pack('!BQ', level, global_id)
@@ -212,8 +232,8 @@ def _update_cell_neighbour(
     grid_idx = grid_cache.map[(cell_level, cell_global_id)]
     neighbour_idx = grid_cache.map[(neighbour_level, neighbour_global_id)]
     oppo_code = _get_toggle_edge_code(edge_code)
-    grid_cache.neighbours[grid_idx][edge_code].add(neighbour_idx)
-    grid_cache.neighbours[neighbour_idx][oppo_code].add(grid_idx)
+    grid_cache.neighbours[grid_idx][edge_code].append(neighbour_idx)
+    grid_cache.neighbours[neighbour_idx][oppo_code].append(grid_idx)
 
 def _get_children_global_ids(
         level: int,
@@ -405,6 +425,8 @@ def _find_cell_neighbours(grid_cache: GridCache, subdivide_rules: list[list[int]
         if r_cell:
             _find_neighbours_along_edge(grid_cache, subdivide_rules, meta_level_info, level, global_id, r_cell[0], r_cell[1], EdgeCode.EAST, ADJACENT_CHECK_EAST)
 
+    grid_cache.compact_neighbours()
+
 def _simplify_fraction(n: int, m: int) -> list[int]:
     """Find the greatest common divisor of two numbers"""
     a, b = n, m
@@ -484,7 +506,7 @@ def _add_edge_to_cell(
     grid_cache: GridCache, cell_key: int,
     edge_code: EdgeCode, edge_index: int
 ):
-    grid_cache.edges[cell_key][edge_code].add(edge_index)
+    grid_cache.edges[cell_key][edge_code].append(edge_index)
 
 def _calc_horizontal_edges(
     grid_cache: GridCache,
@@ -685,17 +707,21 @@ def _calc_cell_edges(
         neighbours = grid_cache.neighbours[grid_index]
         grid_x_min_frac, grid_x_max_frac, grid_y_min_frac, grid_y_max_frac = grid_cache.fract_coords[grid_index]
         
-        north_neighbours = list(neighbours[EdgeCode.NORTH])
+        north_neighbours = neighbours[EdgeCode.NORTH]
         _calc_horizontal_edges(grid_cache, grid_index, level, north_neighbours, EdgeCode.NORTH, EdgeCode.SOUTH, grid_y_max_frac, edge_index_cache, edge_index_dict, edge_adj_cell_indices)
         
-        west_neighbours = list(neighbours[EdgeCode.WEST])
+        west_neighbours = neighbours[EdgeCode.WEST]
         _calc_vertical_edges(grid_cache, grid_index, level, west_neighbours, EdgeCode.WEST, EdgeCode.EAST, grid_x_min_frac, edge_index_cache, edge_index_dict, edge_adj_cell_indices)
         
-        south_neighbours = list(neighbours[EdgeCode.SOUTH])
+        south_neighbours = neighbours[EdgeCode.SOUTH]
         _calc_horizontal_edges(grid_cache, grid_index, level, south_neighbours, EdgeCode.SOUTH, EdgeCode.NORTH, grid_y_min_frac, edge_index_cache, edge_index_dict, edge_adj_cell_indices)
         
-        east_neighbours = list(neighbours[EdgeCode.EAST])
+        east_neighbours = neighbours[EdgeCode.EAST]
         _calc_vertical_edges(grid_cache, grid_index, level, east_neighbours, EdgeCode.EAST, EdgeCode.WEST, grid_x_max_frac, edge_index_cache, edge_index_dict, edge_adj_cell_indices)
+
+    grid_cache.free_neighbours()
+    gc.collect()
+    grid_cache.compact_edges()
 
 def _get_cell_coordinates(level: int, global_id: int, bbox: list[float], meta_level_info: list[dict[str, int]], grid_info: list[list[float]]) -> tuple[float, float, float, float]:
     width = meta_level_info[level]['width']
@@ -711,7 +737,7 @@ def _get_cell_coordinates(level: int, global_id: int, bbox: list[float], meta_le
     return min_xs, min_ys, max_xs, max_ys
 
 def _generate_cell_record(
-    index: int, key: bytes, edges: list[set[int]], bbox: list[float],
+    index: int, key: bytes, edges: list[list[int]], bbox: list[float],
     meta_level_info: list[dict[str, int]], grid_info: list[list[float]],
     altitude: float = -9999.0, lum_type: int = 0
 ) -> bytearray:
@@ -727,10 +753,10 @@ def _generate_cell_record(
         len(edges[EdgeCode.EAST]),                                              # east edge count
         len(edges[EdgeCode.SOUTH]),                                             # south edge count
         len(edges[EdgeCode.NORTH]),                                             # north edge count
-        *[edge_index + 1 for edge_index in sorted(edges[EdgeCode.WEST])],       # west edge indices (1-based)
-        *[edge_index + 1 for edge_index in sorted(edges[EdgeCode.EAST])],       # east edge indices (1-based)
-        *[edge_index + 1 for edge_index in sorted(edges[EdgeCode.SOUTH])],      # south edge indices (1-based)
-        *[edge_index + 1 for edge_index in sorted(edges[EdgeCode.NORTH])],      # north edge indices (1-based)
+        *[edge_index + 1 for edge_index in edges[EdgeCode.WEST]],              # west edge indices (1-based, pre-sorted)
+        *[edge_index + 1 for edge_index in edges[EdgeCode.EAST]],              # east edge indices (1-based, pre-sorted)
+        *[edge_index + 1 for edge_index in edges[EdgeCode.SOUTH]],             # south edge indices (1-based, pre-sorted)
+        *[edge_index + 1 for edge_index in edges[EdgeCode.NORTH]],             # north edge indices (1-based, pre-sorted)
     ]
     
     unpacked_info_type = [
@@ -887,14 +913,9 @@ def _record_cell_topology(
     )
     
     num_processes = min(os.cpu_count(), len(batch_args))
-    with mp.Pool(processes=num_processes) as pool:
-        cell_records_list = pool.map(batch_func, batch_args)
-    cell_records = bytearray()
-    for cell_records_chunk in cell_records_list:
-        cell_records += cell_records_chunk
-    
-    with open(grid_record_path, 'wb') as f:
-        f.write(cell_records)
+    with mp.Pool(processes=num_processes) as pool, open(grid_record_path, 'wb') as f:
+        for cell_records_chunk in pool.imap(batch_func, batch_args):
+            f.write(cell_records_chunk)
 
 def _slice_edge_info(
     start_index: int, length: int,
@@ -1012,14 +1033,9 @@ def _record_edge_topology(
         src_crs=src_crs
     )
     num_processes = min(os.cpu_count(), len(batch_args))
-    with mp.Pool(processes=num_processes) as pool:
-        edge_records_list = pool.map(batch_func, batch_args)
-    edge_records = bytearray()
-    for edge_records_chunk in edge_records_list:
-        edge_records += edge_records_chunk
-    
-    with open(edge_record_path, 'wb') as f:
-        f.write(edge_records)
+    with mp.Pool(processes=num_processes) as pool, open(edge_record_path, 'wb') as f:
+        for edge_records_chunk in pool.imap(batch_func, batch_args):
+            f.write(edge_records_chunk)
 
 def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str], grading_threshold: int = 1, dem_path: str = None, lum_path: str = None):
     # Create workspace directory (already done by resource_dir, but for consistency with original arg)
@@ -1113,11 +1129,12 @@ def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str]
         
         # Topology construction for the grid ##################################################
         
-        # Sort and concatenate activated cell keys
-        keys_data = b''.join(sorted(activated_cell_keys))
-        
-        # Free memory
+        # Sort and concatenate activated cell keys (convert to list first to avoid transient peak)
+        sorted_keys = sorted(activated_cell_keys)
         activated_cell_keys = None
+        gc.collect()
+        keys_data = b''.join(sorted_keys)
+        del sorted_keys
         gc.collect()
         
         # Init GridCache
