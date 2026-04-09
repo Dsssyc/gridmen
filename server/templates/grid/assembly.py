@@ -61,9 +61,19 @@ class GridCache:
         self._len = len(self.data) // 9
         
         self.array = self._ArrayView(self)
-        self.map = {index : i for i, index in enumerate(self.array)}
 
-        self.fract_coords: list[tuple[list[int], list[int], list[int], list[int]]] = []
+        # Per-level dict: map[level][global_id] = cell_index
+        max_level = 0
+        for i in range(self._len):
+            level = self.data[i * 9]
+            if level > max_level:
+                max_level = level
+        self.map: list[dict[int, int]] = [dict() for _ in range(max_level + 1)]
+        for i, (level, global_id) in enumerate(self.array):
+            self.map[level][global_id] = i
+
+        self._fract_x_tables: list[list[list[int]]] = []
+        self._fract_y_tables: list[list[list[int]]] = []
 
         self.edges: list[list[list[int]]] = [[[] for _ in range(4)] for _ in range(self._len)]
         self.neighbours: list[list[list[int]]] = [[[] for _ in range(4)] for _ in range(self._len)]
@@ -80,7 +90,7 @@ class GridCache:
         return struct.unpack('!BQ', subdata)
 
     def has_cell(self, level: int, global_id: int) -> bool:
-        return (level, global_id) in self.map
+        return level < len(self.map) and global_id in self.map[level]
 
     def slice_cells(self, start_index: int, length: int) -> bytes:
         if start_index < 0 or start_index > self._len:
@@ -114,6 +124,36 @@ class GridCache:
     def free_neighbours(self):
         """Free neighbour data after it is no longer needed."""
         self.neighbours = None
+
+    def build_fract_tables(self, meta_level_info: list[dict[str, int]]):
+        """Precompute per-level fraction boundary tables."""
+        self._fract_x_tables = []
+        self._fract_y_tables = []
+        for level_info in meta_level_info:
+            width = level_info['width']
+            height = level_info['height']
+            x_table = [_simplify_fraction(u, width) for u in range(width + 1)]
+            y_table = [_simplify_fraction(v, height) for v in range(height + 1)]
+            self._fract_x_tables.append(x_table)
+            self._fract_y_tables.append(y_table)
+
+    def get_fract_coords(self, cell_index: int) -> tuple[list[int], list[int], list[int], list[int]]:
+        """Look up fractional coordinates from precomputed boundary tables."""
+        level, global_id = self._decode_at_index(cell_index)
+        width = len(self._fract_x_tables[level]) - 1
+        u = global_id % width
+        v = global_id // width
+        return (
+            self._fract_x_tables[level][u],
+            self._fract_x_tables[level][u + 1],
+            self._fract_y_tables[level][v],
+            self._fract_y_tables[level][v + 1],
+        )
+
+    def free_fract_tables(self):
+        """Free fraction tables after edge calculation is complete."""
+        self._fract_x_tables = None
+        self._fract_y_tables = None
 
 def _encode_cell_key(level: int, global_id: int) -> bytes:
     return struct.pack('!BQ', level, global_id)
@@ -229,8 +269,8 @@ def _update_cell_neighbour(
     if edge_code == EDGE_CODE_INVALID:
         return
     
-    grid_idx = grid_cache.map[(cell_level, cell_global_id)]
-    neighbour_idx = grid_cache.map[(neighbour_level, neighbour_global_id)]
+    grid_idx = grid_cache.map[cell_level][cell_global_id]
+    neighbour_idx = grid_cache.map[neighbour_level][neighbour_global_id]
     oppo_code = _get_toggle_edge_code(edge_code)
     grid_cache.neighbours[grid_idx][edge_code].append(neighbour_idx)
     grid_cache.neighbours[neighbour_idx][oppo_code].append(grid_idx)
@@ -434,20 +474,6 @@ def _simplify_fraction(n: int, m: int) -> list[int]:
         a, b = b, a % b
     return [n // a, m // a]
 
-def _get_fractional_coords(level: int, global_id: int, meta_level_info: list[dict[str, int]]) -> tuple[list[int], list[int], list[int], list[int]]:
-    width = meta_level_info[level]['width']
-    height = meta_level_info[level]['height']
-    
-    u = global_id % width
-    v = global_id // width
-    
-    x_min_frac = _simplify_fraction(u, width)
-    x_max_frac = _simplify_fraction(u + 1, width)
-    y_min_frac = _simplify_fraction(v, height)
-    y_max_frac = _simplify_fraction(v + 1, height)
-    
-    return x_min_frac, x_max_frac, y_min_frac, y_max_frac
-
 def _get_edge_index(
     cell_key_a: int, cell_key_b: int | None, 
     direction: int, edge_range_info: list[list[int]], code_from_a: EdgeCode,
@@ -518,7 +544,7 @@ def _calc_horizontal_edges(
     edge_index_dict: dict[int, bytes],
     edge_adj_cell_indices: list[list[int | None]]
 ):
-    cell_x_min_f, cell_x_max_f, _, _ = grid_cache.fract_coords[cell_index]
+    cell_x_min_f, cell_x_max_f, _, _ = grid_cache.get_fract_coords(cell_index)
     cell_x_min, cell_x_max = cell_x_min_f[0] / cell_x_min_f[1], cell_x_max_f[0] / cell_x_max_f[1]
     
     # Case when no neighbour ############################################################################
@@ -537,7 +563,7 @@ def _calc_horizontal_edges(
     # Case when neighbours have equal or higher levels ##################################################
     processed_neighbours = []
     for neighbour_index in neighbour_indices:
-        n_x_min_f, n_x_max_f, _, _ = grid_cache.fract_coords[neighbour_index]
+        n_x_min_f, n_x_max_f, _, _ = grid_cache.get_fract_coords(neighbour_index)
         processed_neighbours.append({
             'index': neighbour_index,
             'x_min_f': n_x_min_f,
@@ -610,7 +636,7 @@ def _calc_vertical_edges(
     edge_index_dict: dict[int, bytes],
     edge_adj_cell_indices: list[list[int | None]]
 ):
-    _, _, cell_y_min_f, cell_y_max_f = grid_cache.fract_coords[cell_index]
+    _, _, cell_y_min_f, cell_y_max_f = grid_cache.get_fract_coords(cell_index)
     cell_y_min, cell_y_max = cell_y_min_f[0] / cell_y_min_f[1], cell_y_max_f[0] / cell_y_max_f[1]
     
     # Case when no neighbour ############################################################################
@@ -629,7 +655,7 @@ def _calc_vertical_edges(
     # Case when neighbours have equal or higher levels ##################################################
     processed_neighbours = []
     for neighbour_index in neighbour_indices:
-        _, _, n_y_min_f, n_y_max_f = grid_cache.fract_coords[neighbour_index]
+        _, _, n_y_min_f, n_y_max_f = grid_cache.get_fract_coords(neighbour_index)
         processed_neighbours.append({
             'index': neighbour_index,
             'y_min_f': n_y_min_f,
@@ -699,13 +725,11 @@ def _calc_cell_edges(
     edge_index_dict: dict[int, bytes],
     edge_adj_cell_indices: list[list[int | None]]
 ):
-    # Pre-calculate fractional coordinates for each cell
-    for level, global_id in grid_cache.array:
-        grid_cache.fract_coords.append(_get_fractional_coords(level, global_id, meta_level_info))
+    grid_cache.build_fract_tables(meta_level_info)
 
     for grid_index, (level, global_id) in enumerate(grid_cache.array):
         neighbours = grid_cache.neighbours[grid_index]
-        grid_x_min_frac, grid_x_max_frac, grid_y_min_frac, grid_y_max_frac = grid_cache.fract_coords[grid_index]
+        grid_x_min_frac, grid_x_max_frac, grid_y_min_frac, grid_y_max_frac = grid_cache.get_fract_coords(grid_index)
         
         north_neighbours = neighbours[EdgeCode.NORTH]
         _calc_horizontal_edges(grid_cache, grid_index, level, north_neighbours, EdgeCode.NORTH, EdgeCode.SOUTH, grid_y_max_frac, edge_index_cache, edge_index_dict, edge_adj_cell_indices)
@@ -721,6 +745,7 @@ def _calc_cell_edges(
 
     grid_cache.free_neighbours()
     gc.collect()
+    grid_cache.free_fract_tables()
     grid_cache.compact_edges()
 
 def _get_cell_coordinates(level: int, global_id: int, bbox: list[float], meta_level_info: list[dict[str, int]], grid_info: list[list[float]]) -> tuple[float, float, float, float]:
