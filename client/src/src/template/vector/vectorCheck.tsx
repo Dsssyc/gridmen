@@ -7,7 +7,7 @@ import { Dot, Globe, Minus, Palette, SplinePointer, Square, X } from 'lucide-rea
 import { ResourceNode } from '../scene/scene'
 import { linkNode } from '../api/node'
 import * as api from '../api/apis'
-import { vectorColorMap } from '@/utils/utils'
+import { getHexColorByValue, vectorColorMap } from '@/utils/utils'
 import store from '@/store/store'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
@@ -92,9 +92,13 @@ export default function VectorCheck({ node, context }: VectorCheckProps) {
         pageContext.current.vectorData.name = (node as ResourceNode).mountParams.name
         pageContext.current.drawVector = (node as ResourceNode).mountParams.feature_json
 
-        pageContext.current.drawVector?.features.forEach((feature) => pageContext.current.checkedVectorIds.add(feature.id as string))
+        const addedIds = drawInstance.add(pageContext.current.drawVector!) as string[]
+        addedIds.forEach((id) => pageContext.current.checkedVectorIds.add(id))
 
-        drawInstance.add(pageContext.current.drawVector!);
+        const hex = getHexColorByValue(pageContext.current.vectorData.color)
+        for (const fid of pageContext.current.checkedVectorIds) {
+            drawInstance.setFeatureProperty(fid, "color", hex)
+        };
 
         (node as ResourceNode).context = {
             ...((node as ResourceNode).context ?? {}),

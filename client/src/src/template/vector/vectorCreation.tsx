@@ -4,7 +4,7 @@ import * as api from '../api/apis'
 import { Badge } from "@/components/ui/badge"
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { vectorColorMap, waitForDrawInstanceLoad, waitForMapLoad } from '@/utils/utils'
+import { getHexColorByValue, vectorColorMap, waitForDrawInstanceLoad, waitForMapLoad } from '@/utils/utils'
 import { Button } from '@/components/ui/button'
 import { IResourceNode } from '../scene/iscene'
 import { IViewContext } from '@/views/IViewContext'
@@ -145,9 +145,11 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
 
         const onCreate = (e: any) => {
             if (e.features && Array.isArray(e.features)) {
+                const hex = getHexColorByValue(pageContext.current.vectorData.color)
                 for (const feature of e.features) {
                     if (!feature.id) continue
                     drawInstance.setFeatureProperty(feature.id, "session_id", node.nodeInfo)
+                    drawInstance.setFeatureProperty(feature.id, "color", hex)
                     pageContext.current.createdVectorIds.add(feature.id)
                 }
             }
@@ -512,6 +514,11 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                                         value={pageContext.current.vectorData.color}
                                         onValueChange={(value: any) => {
                                             pageContext.current.vectorData.color = value
+                                            const hex = getHexColorByValue(value)
+                                            for (const fid of pageContext.current.createdVectorIds) {
+                                                drawInstance.setFeatureProperty(fid, "color", hex)
+                                            }
+                                            drawInstance.set(drawInstance.getAll())
                                             triggerRepaint()
                                         }}
                                     >
@@ -685,7 +692,6 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                                             value={pageContext.current.vectorData.color}
                                             onValueChange={(value: any) => {
                                                 pageContext.current.vectorData.color = value
-                                                // applyVectorColorToDraw(getHexColorByValue(value))
                                                 triggerRepaint()
                                             }}
                                         >

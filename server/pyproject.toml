@@ -9,7 +9,7 @@ dependencies = [
     "uvicorn>=0.30.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
-    "c-two>=0.2.6",
+    "c-two==0.2.6",
     "pyproj>=3.7.1",
     "pyyaml>=6.0.3",
     "py-noodle",

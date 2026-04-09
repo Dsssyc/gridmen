@@ -49,7 +49,7 @@ def _handle_assembly(assembly_params: dict, node_key: str, resource_dir: Path):
     """处理网格装配逻辑"""
     schema_node_key = assembly_params.get('schema_node_key')
     patch_node_keys = assembly_params.get('patch_node_keys')
-    grading_threshold = -1
+    grading_threshold = 1
     dem_path = assembly_params.get('dem_path')
     lum_path = assembly_params.get('lum_path')
     meta_path = resource_dir / 'grid.meta.json'

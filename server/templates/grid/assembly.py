@@ -1021,7 +1021,7 @@ def _record_edge_topology(
     with open(edge_record_path, 'wb') as f:
         f.write(edge_records)
 
-def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str], grading_threshold: int = -1, dem_path: str = None, lum_path: str = None):
+def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str], grading_threshold: int = 1, dem_path: str = None, lum_path: str = None):
     # Create workspace directory (already done by resource_dir, but for consistency with original arg)
         workspace = resource_dir
 
@@ -1108,7 +1108,7 @@ def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str]
                 risk_cells = _find_risk_cells(grading_threshold, activated_cell_keys, subdivide_rules, meta_level_info)
                 if not risk_cells:
                     break
-                activated_cell_keys = _refine_risk_cells(risk_cells, meta_level_info, subdivide_rules).union(activated_cell_keys.difference(risk_cells))
+                activated_cell_keys = _refine_risk_cells(risk_cells, subdivide_rules, meta_level_info).union(activated_cell_keys.difference(risk_cells))
             print(f'Risk cell refinement took {time.time() - current_time:.2f} seconds')
         
         # Topology construction for the grid ##################################################

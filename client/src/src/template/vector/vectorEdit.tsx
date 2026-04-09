@@ -27,7 +27,7 @@ import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { ResourceNode } from "../scene/scene"
-import { vectorColorMap } from "@/utils/utils"
+import { getHexColorByValue, vectorColorMap } from "@/utils/utils"
 import { Button } from "@/components/ui/button"
 import type { IResourceNode } from "../scene/iscene"
 import { MapViewContext } from "@/views/mapView/mapView"
@@ -143,9 +143,13 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
         pageContext.current.vectorData.color = (node as ResourceNode).mountParams.color
         pageContext.current.drawVector = (node as ResourceNode).mountParams.feature_json
 
-        pageContext.current.drawVector?.features.forEach((feature) => pageContext.current.editedVectorIds.add(feature.id as string))
+        const addedIds = drawInstance.add(pageContext.current.drawVector!) as string[]
+        addedIds.forEach((id) => pageContext.current.editedVectorIds.add(id))
 
-        drawInstance.add(pageContext.current.drawVector!);
+        const hex = getHexColorByValue(pageContext.current.vectorData.color)
+        for (const fid of pageContext.current.editedVectorIds) {
+            drawInstance.setFeatureProperty(fid, "color", hex)
+        };
 
         (node as ResourceNode).context = {
             ...((node as ResourceNode).context ?? {}),
@@ -188,9 +192,11 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
 
         const onCreate = (e: any) => {
             if (e.features && Array.isArray(e.features)) {
+                const hex = getHexColorByValue(pageContext.current.vectorData.color)
                 for (const feature of e.features) {
                     if (!feature.id) continue
                     drawInstance.setFeatureProperty(feature.id, "session_id", node.nodeInfo)
+                    drawInstance.setFeatureProperty(feature.id, "color", hex)
                     pageContext.current.editedVectorIds.add(feature.id)
                 }
             }
@@ -475,7 +481,11 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                                         value={pageContext.current.vectorData.color}
                                         onValueChange={(value: any) => {
                                             pageContext.current.vectorData.color = value
-                                            // applyVectorColorToDraw(getHexColorByValue(value))
+                                            const hex = getHexColorByValue(value)
+                                            for (const fid of pageContext.current.editedVectorIds) {
+                                                drawInstance.setFeatureProperty(fid, "color", hex)
+                                            }
+                                            drawInstance.set(drawInstance.getAll())
                                             triggerRepaint()
                                         }}
                                     >
