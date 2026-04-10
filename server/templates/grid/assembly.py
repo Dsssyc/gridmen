@@ -10,8 +10,10 @@ import multiprocessing as mp
 
 from pathlib import Path
 from enum import IntEnum
+from pynoodle import noodle
 from typing import Callable
-from crms.patch import Patch
+# from crms.patch import Patch
+from icrms.ipatch import IPatch
 from functools import partial
 from rasterio.warp import transform
 
@@ -59,12 +61,22 @@ class GridCache:
         self._len = len(self.data) // 9
         
         self.array = self._ArrayView(self)
-        self.map = {index : i for i, index in enumerate(self.array)}
 
-        self.fract_coords: list[tuple[list[int], list[int], list[int], list[int]]] = []
+        # Per-level dict: map[level][global_id] = cell_index
+        max_level = 0
+        for i in range(self._len):
+            level = self.data[i * 9]
+            if level > max_level:
+                max_level = level
+        self.map: list[dict[int, int]] = [dict() for _ in range(max_level + 1)]
+        for i, (level, global_id) in enumerate(self.array):
+            self.map[level][global_id] = i
 
-        self.edges: list[list[set[int]]] = [[set() for _ in range(4)] for _ in range(self._len)]
-        self.neighbours: list[list[set[int]]] = [[set() for _ in range(4)] for _ in range(self._len)]
+        self._fract_x_tables: list[list[list[int]]] = []
+        self._fract_y_tables: list[list[list[int]]] = []
+
+        self.edges: list[list[list[int]]] = [[[] for _ in range(4)] for _ in range(self._len)]
+        self.neighbours: list[list[list[int]]] = [[[] for _ in range(4)] for _ in range(self._len)]
 
     def __len__(self) -> int:
         return self._len
@@ -78,7 +90,7 @@ class GridCache:
         return struct.unpack('!BQ', subdata)
 
     def has_cell(self, level: int, global_id: int) -> bool:
-        return (level, global_id) in self.map
+        return level < len(self.map) and global_id in self.map[level]
 
     def slice_cells(self, start_index: int, length: int) -> bytes:
         if start_index < 0 or start_index > self._len:
@@ -92,6 +104,56 @@ class GridCache:
             raise IndexError('Index out of bounds')
         end_index = min(start_index + length, self._len)
         return self.edges[start_index : end_index]
+
+    def compact_neighbours(self):
+        """Deduplicate and sort all neighbour lists in place."""
+        for i in range(self._len):
+            for d in range(4):
+                lst = self.neighbours[i][d]
+                if lst:
+                    self.neighbours[i][d] = sorted(set(lst))
+
+    def compact_edges(self):
+        """Deduplicate and sort all edge lists in place."""
+        for i in range(self._len):
+            for d in range(4):
+                lst = self.edges[i][d]
+                if lst:
+                    self.edges[i][d] = sorted(set(lst))
+
+    def free_neighbours(self):
+        """Free neighbour data after it is no longer needed."""
+        self.neighbours = None
+
+    def build_fract_tables(self, meta_level_info: list[dict[str, int]]):
+        """Precompute per-level fraction boundary tables."""
+        self._fract_x_tables = []
+        self._fract_y_tables = []
+        for level_info in meta_level_info:
+            width = level_info['width']
+            height = level_info['height']
+            x_table = [_simplify_fraction(u, width) for u in range(width + 1)]
+            y_table = [_simplify_fraction(v, height) for v in range(height + 1)]
+            self._fract_x_tables.append(x_table)
+            self._fract_y_tables.append(y_table)
+
+    def get_fract_coords(self, cell_index: int) -> tuple[list[int], list[int], list[int], list[int]]:
+        """Look up fractional coordinates from precomputed boundary tables."""
+        level, global_id = self._decode_at_index(cell_index)
+        width = len(self._fract_x_tables[level]) - 1
+        u = global_id % width
+        v = global_id // width
+        return (
+            self._fract_x_tables[level][u],
+            self._fract_x_tables[level][u + 1],
+            self._fract_y_tables[level][v],
+            self._fract_y_tables[level][v + 1],
+        )
+
+    def free_fract_tables(self):
+        """Free fraction tables after edge calculation is complete."""
+        self._fract_x_tables = None
+        self._fract_y_tables = None
 
 def _encode_cell_key(level: int, global_id: int) -> bytes:
     return struct.pack('!BQ', level, global_id)
@@ -150,47 +212,40 @@ def _get_all_ancestor_keys(key: bytes, level_info: list[dict[str, int]], subdivi
 
 def _update_cells_by_patch(
     keys: set[bytes],
-    schema_file_path: str, patch_workspace: str,
+    schema_file_path: str, patch_node_key: str,
     meta_bounds: list[float], meta_level_info: list[dict[str, int]]
 ):
-    print('Updating meta grid cells by patch:', patch_workspace)
-    
-    # Create patch crm - Assuming Patch(resource_space) constructor or similar
-    # The user code had Patch(schema_file_path, patch_workspace), adjust if Patch definition changed
-    # Based on previous context, Patch might just need workspace path now if it self-loads schema
-    # But let's keep the user's signature style or adapt based on recent Patch changes
-    # Recent Patch.__init__ signature: def __init__(self, resource_space: str):
-    
-    # ADAPTATION: Use the new Patch signature
-    patch = Patch(patch_workspace) # Assuming it can load schema/meta internally
-    
-    # Calculate bottom-left fraction in meta grid
-    patch_bounds = patch.bounds
-    bl_col_meta_f = (patch_bounds[0] - meta_bounds[0]) / (meta_bounds[2] - meta_bounds[0])
-    bl_row_meta_f = (patch_bounds[1] - meta_bounds[1]) / (meta_bounds[3] - meta_bounds[1])
-    
-    # Get active grid infos from patch and update keys
-    # Assuming patch.get_active_grid_infos() returns (levels, global_ids) arrays
-    levels, global_ids = patch.get_activated_cell_infos()
-    for level, global_id in zip(levels, global_ids):
-        # Meta level info
-        meta_level_cols = meta_level_info[level]['width']
-        meta_level_rows = meta_level_info[level]['height']
+    print('Updating meta grid cells by patch:', patch_node_key)
+    with noodle.connect(IPatch, patch_node_key, 'pr') as patch:
+        meta = patch.get_meta()
+        # Calculate bottom-left fraction in meta grid
+        patch_bounds = meta.bounds
+        bl_col_meta_f = (patch_bounds[0] - meta_bounds[0]) / (meta_bounds[2] - meta_bounds[0])
+        bl_row_meta_f = (patch_bounds[1] - meta_bounds[1]) / (meta_bounds[3] - meta_bounds[1])
         
-        # Patch level info
-        patch_level_cols = patch.level_info[level]['width']
-        
-        # Adjust patch global id to meta grid global id
-        patch_gid_u = global_id % patch_level_cols
-        patch_gid_v = global_id // patch_level_cols
+        # Get active grid infos from patch and update keys
+        # Assuming patch.get_active_grid_infos() returns (levels, global_ids) arrays
+        level_info = patch.get_level_info()
+        levels, global_ids = patch.get_activated_cell_infos()
+        for level, global_id in zip(levels, global_ids):
+            # Meta level info
+            meta_level_cols = meta_level_info[level]['width']
+            meta_level_rows = meta_level_info[level]['height']
+            
+            # Patch level info
+            patch_level_cols = level_info[level]['width']
+            
+            # Adjust patch global id to meta grid global id
+            patch_gid_u = global_id % patch_level_cols
+            patch_gid_v = global_id // patch_level_cols
 
-        meta_gid_u = int(bl_col_meta_f * meta_level_cols + 0.5) + patch_gid_u
-        meta_gid_v = int(bl_row_meta_f * meta_level_rows + 0.5) + patch_gid_v
-        meta_global_id = meta_gid_v * meta_level_cols + meta_gid_u
-        
-        # Encode and add to keys
-        cell_key = _encode_cell_key(level, meta_global_id)
-        keys.add(cell_key)
+            meta_gid_u = int(bl_col_meta_f * meta_level_cols + 0.5) + patch_gid_u
+            meta_gid_v = int(bl_row_meta_f * meta_level_rows + 0.5) + patch_gid_v
+            meta_global_id = meta_gid_v * meta_level_cols + meta_gid_u
+            
+            # Encode and add to keys
+            cell_key = _encode_cell_key(level, meta_global_id)
+            keys.add(cell_key)
      
 def _get_cell_from_uv(level: int, level_cols, level_rows, u: int, v: int, meta_level_info: list[dict[str, int]]) -> tuple[int, int] | None:
     if level >= len(meta_level_info) or level < 0:
@@ -214,11 +269,11 @@ def _update_cell_neighbour(
     if edge_code == EDGE_CODE_INVALID:
         return
     
-    grid_idx = grid_cache.map[(cell_level, cell_global_id)]
-    neighbour_idx = grid_cache.map[(neighbour_level, neighbour_global_id)]
+    grid_idx = grid_cache.map[cell_level][cell_global_id]
+    neighbour_idx = grid_cache.map[neighbour_level][neighbour_global_id]
     oppo_code = _get_toggle_edge_code(edge_code)
-    grid_cache.neighbours[grid_idx][edge_code].add(neighbour_idx)
-    grid_cache.neighbours[neighbour_idx][oppo_code].add(grid_idx)
+    grid_cache.neighbours[grid_idx][edge_code].append(neighbour_idx)
+    grid_cache.neighbours[neighbour_idx][oppo_code].append(grid_idx)
 
 def _get_children_global_ids(
         level: int,
@@ -410,26 +465,14 @@ def _find_cell_neighbours(grid_cache: GridCache, subdivide_rules: list[list[int]
         if r_cell:
             _find_neighbours_along_edge(grid_cache, subdivide_rules, meta_level_info, level, global_id, r_cell[0], r_cell[1], EdgeCode.EAST, ADJACENT_CHECK_EAST)
 
+    grid_cache.compact_neighbours()
+
 def _simplify_fraction(n: int, m: int) -> list[int]:
     """Find the greatest common divisor of two numbers"""
     a, b = n, m
     while b != 0:
         a, b = b, a % b
     return [n // a, m // a]
-
-def _get_fractional_coords(level: int, global_id: int, meta_level_info: list[dict[str, int]]) -> tuple[list[int], list[int], list[int], list[int]]:
-    width = meta_level_info[level]['width']
-    height = meta_level_info[level]['height']
-    
-    u = global_id % width
-    v = global_id // width
-    
-    x_min_frac = _simplify_fraction(u, width)
-    x_max_frac = _simplify_fraction(u + 1, width)
-    y_min_frac = _simplify_fraction(v, height)
-    y_max_frac = _simplify_fraction(v + 1, height)
-    
-    return x_min_frac, x_max_frac, y_min_frac, y_max_frac
 
 def _get_edge_index(
     cell_key_a: int, cell_key_b: int | None, 
@@ -489,7 +532,7 @@ def _add_edge_to_cell(
     grid_cache: GridCache, cell_key: int,
     edge_code: EdgeCode, edge_index: int
 ):
-    grid_cache.edges[cell_key][edge_code].add(edge_index)
+    grid_cache.edges[cell_key][edge_code].append(edge_index)
 
 def _calc_horizontal_edges(
     grid_cache: GridCache,
@@ -501,7 +544,7 @@ def _calc_horizontal_edges(
     edge_index_dict: dict[int, bytes],
     edge_adj_cell_indices: list[list[int | None]]
 ):
-    cell_x_min_f, cell_x_max_f, _, _ = grid_cache.fract_coords[cell_index]
+    cell_x_min_f, cell_x_max_f, _, _ = grid_cache.get_fract_coords(cell_index)
     cell_x_min, cell_x_max = cell_x_min_f[0] / cell_x_min_f[1], cell_x_max_f[0] / cell_x_max_f[1]
     
     # Case when no neighbour ############################################################################
@@ -520,7 +563,7 @@ def _calc_horizontal_edges(
     # Case when neighbours have equal or higher levels ##################################################
     processed_neighbours = []
     for neighbour_index in neighbour_indices:
-        n_x_min_f, n_x_max_f, _, _ = grid_cache.fract_coords[neighbour_index]
+        n_x_min_f, n_x_max_f, _, _ = grid_cache.get_fract_coords(neighbour_index)
         processed_neighbours.append({
             'index': neighbour_index,
             'x_min_f': n_x_min_f,
@@ -593,7 +636,7 @@ def _calc_vertical_edges(
     edge_index_dict: dict[int, bytes],
     edge_adj_cell_indices: list[list[int | None]]
 ):
-    _, _, cell_y_min_f, cell_y_max_f = grid_cache.fract_coords[cell_index]
+    _, _, cell_y_min_f, cell_y_max_f = grid_cache.get_fract_coords(cell_index)
     cell_y_min, cell_y_max = cell_y_min_f[0] / cell_y_min_f[1], cell_y_max_f[0] / cell_y_max_f[1]
     
     # Case when no neighbour ############################################################################
@@ -612,7 +655,7 @@ def _calc_vertical_edges(
     # Case when neighbours have equal or higher levels ##################################################
     processed_neighbours = []
     for neighbour_index in neighbour_indices:
-        _, _, n_y_min_f, n_y_max_f = grid_cache.fract_coords[neighbour_index]
+        _, _, n_y_min_f, n_y_max_f = grid_cache.get_fract_coords(neighbour_index)
         processed_neighbours.append({
             'index': neighbour_index,
             'y_min_f': n_y_min_f,
@@ -682,25 +725,28 @@ def _calc_cell_edges(
     edge_index_dict: dict[int, bytes],
     edge_adj_cell_indices: list[list[int | None]]
 ):
-    # Pre-calculate fractional coordinates for each cell
-    for level, global_id in grid_cache.array:
-        grid_cache.fract_coords.append(_get_fractional_coords(level, global_id, meta_level_info))
+    grid_cache.build_fract_tables(meta_level_info)
 
     for grid_index, (level, global_id) in enumerate(grid_cache.array):
         neighbours = grid_cache.neighbours[grid_index]
-        grid_x_min_frac, grid_x_max_frac, grid_y_min_frac, grid_y_max_frac = grid_cache.fract_coords[grid_index]
+        grid_x_min_frac, grid_x_max_frac, grid_y_min_frac, grid_y_max_frac = grid_cache.get_fract_coords(grid_index)
         
-        north_neighbours = list(neighbours[EdgeCode.NORTH])
+        north_neighbours = neighbours[EdgeCode.NORTH]
         _calc_horizontal_edges(grid_cache, grid_index, level, north_neighbours, EdgeCode.NORTH, EdgeCode.SOUTH, grid_y_max_frac, edge_index_cache, edge_index_dict, edge_adj_cell_indices)
         
-        west_neighbours = list(neighbours[EdgeCode.WEST])
+        west_neighbours = neighbours[EdgeCode.WEST]
         _calc_vertical_edges(grid_cache, grid_index, level, west_neighbours, EdgeCode.WEST, EdgeCode.EAST, grid_x_min_frac, edge_index_cache, edge_index_dict, edge_adj_cell_indices)
         
-        south_neighbours = list(neighbours[EdgeCode.SOUTH])
+        south_neighbours = neighbours[EdgeCode.SOUTH]
         _calc_horizontal_edges(grid_cache, grid_index, level, south_neighbours, EdgeCode.SOUTH, EdgeCode.NORTH, grid_y_min_frac, edge_index_cache, edge_index_dict, edge_adj_cell_indices)
         
-        east_neighbours = list(neighbours[EdgeCode.EAST])
+        east_neighbours = neighbours[EdgeCode.EAST]
         _calc_vertical_edges(grid_cache, grid_index, level, east_neighbours, EdgeCode.EAST, EdgeCode.WEST, grid_x_max_frac, edge_index_cache, edge_index_dict, edge_adj_cell_indices)
+
+    grid_cache.free_neighbours()
+    gc.collect()
+    grid_cache.free_fract_tables()
+    grid_cache.compact_edges()
 
 def _get_cell_coordinates(level: int, global_id: int, bbox: list[float], meta_level_info: list[dict[str, int]], grid_info: list[list[float]]) -> tuple[float, float, float, float]:
     width = meta_level_info[level]['width']
@@ -716,7 +762,7 @@ def _get_cell_coordinates(level: int, global_id: int, bbox: list[float], meta_le
     return min_xs, min_ys, max_xs, max_ys
 
 def _generate_cell_record(
-    index: int, key: bytes, edges: list[set[int]], bbox: list[float],
+    index: int, key: bytes, edges: list[list[int]], bbox: list[float],
     meta_level_info: list[dict[str, int]], grid_info: list[list[float]],
     altitude: float = -9999.0, lum_type: int = 0
 ) -> bytearray:
@@ -732,10 +778,10 @@ def _generate_cell_record(
         len(edges[EdgeCode.EAST]),                                              # east edge count
         len(edges[EdgeCode.SOUTH]),                                             # south edge count
         len(edges[EdgeCode.NORTH]),                                             # north edge count
-        *[edge_index + 1 for edge_index in sorted(edges[EdgeCode.WEST])],       # west edge indices (1-based)
-        *[edge_index + 1 for edge_index in sorted(edges[EdgeCode.EAST])],       # east edge indices (1-based)
-        *[edge_index + 1 for edge_index in sorted(edges[EdgeCode.SOUTH])],      # south edge indices (1-based)
-        *[edge_index + 1 for edge_index in sorted(edges[EdgeCode.NORTH])],      # north edge indices (1-based)
+        *[edge_index + 1 for edge_index in edges[EdgeCode.WEST]],              # west edge indices (1-based, pre-sorted)
+        *[edge_index + 1 for edge_index in edges[EdgeCode.EAST]],              # east edge indices (1-based, pre-sorted)
+        *[edge_index + 1 for edge_index in edges[EdgeCode.SOUTH]],             # south edge indices (1-based, pre-sorted)
+        *[edge_index + 1 for edge_index in edges[EdgeCode.NORTH]],             # north edge indices (1-based, pre-sorted)
     ]
     
     unpacked_info_type = [
@@ -892,14 +938,9 @@ def _record_cell_topology(
     )
     
     num_processes = min(os.cpu_count(), len(batch_args))
-    with mp.Pool(processes=num_processes) as pool:
-        cell_records_list = pool.map(batch_func, batch_args)
-    cell_records = bytearray()
-    for cell_records_chunk in cell_records_list:
-        cell_records += cell_records_chunk
-    
-    with open(grid_record_path, 'wb') as f:
-        f.write(cell_records)
+    with mp.Pool(processes=num_processes) as pool, open(grid_record_path, 'wb') as f:
+        for cell_records_chunk in pool.imap(batch_func, batch_args):
+            f.write(cell_records_chunk)
 
 def _slice_edge_info(
     start_index: int, length: int,
@@ -1017,16 +1058,11 @@ def _record_edge_topology(
         src_crs=src_crs
     )
     num_processes = min(os.cpu_count(), len(batch_args))
-    with mp.Pool(processes=num_processes) as pool:
-        edge_records_list = pool.map(batch_func, batch_args)
-    edge_records = bytearray()
-    for edge_records_chunk in edge_records_list:
-        edge_records += edge_records_chunk
-    
-    with open(edge_record_path, 'wb') as f:
-        f.write(edge_records)
+    with mp.Pool(processes=num_processes) as pool, open(edge_record_path, 'wb') as f:
+        for edge_records_chunk in pool.imap(batch_func, batch_args):
+            f.write(edge_records_chunk)
 
-def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str], grading_threshold: int = -1, dem_path: str = None, lum_path: str = None):
+def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str], grading_threshold: int = 1, dem_path: str = None, lum_path: str = None):
     # Create workspace directory (already done by resource_dir, but for consistency with original arg)
         workspace = resource_dir
 
@@ -1084,12 +1120,13 @@ def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str]
         activated_cell_keys: set[bytes] = set()
         
         # Update activated cells by each patch
-        for patch_path in patch_paths:
+        for patch_node_key in patch_node_keys:
             _update_cells_by_patch(
                 activated_cell_keys,
-                schema_file_path, patch_path,
+                schema_file_path, patch_node_key,
                 meta_bounds, meta_level_info
             )
+        print(f'All activated cell num: {len(activated_cell_keys)}')
         
         # Filter activated cells to remove conflicts
         # Conflict: if a cell is activated, all its ancestors must be deactivated
@@ -1112,16 +1149,17 @@ def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str]
                 risk_cells = _find_risk_cells(grading_threshold, activated_cell_keys, subdivide_rules, meta_level_info)
                 if not risk_cells:
                     break
-                activated_cell_keys = _refine_risk_cells(risk_cells, meta_level_info, subdivide_rules).union(activated_cell_keys.difference(risk_cells))
+                activated_cell_keys = _refine_risk_cells(risk_cells, subdivide_rules, meta_level_info).union(activated_cell_keys.difference(risk_cells))
             print(f'Risk cell refinement took {time.time() - current_time:.2f} seconds')
         
         # Topology construction for the grid ##################################################
         
-        # Sort and concatenate activated cell keys
-        keys_data = b''.join(sorted(activated_cell_keys))
-        
-        # Free memory
+        # Sort and concatenate activated cell keys (convert to list first to avoid transient peak)
+        sorted_keys = sorted(activated_cell_keys)
         activated_cell_keys = None
+        gc.collect()
+        keys_data = b''.join(sorted_keys)
+        del sorted_keys
         gc.collect()
         
         # Init GridCache

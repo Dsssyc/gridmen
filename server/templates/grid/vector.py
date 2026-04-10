@@ -134,13 +134,13 @@ def get_ne(ne_path: str) -> "NeData":
             for line_idx, raw_line in enumerate(f):
                 original_line = raw_line
                 try:
-                    stripped_line = raw_line.strip()
+                    stripped_line = raw_line.strip(', ')
                     if not stripped_line:
                         continue  # 跳过空行
 
                     # === 关键修复：强制使用空白符分割，不再检测逗号 ===
-                    # 使用 \s+ 分割任意空白（空格、制表符等），并过滤空字符串
-                    row_data = [item for item in re.split(r'\s+', stripped_line) if item]
+                    # 使用 ,\s+ 作为分隔符，确保即使存在逗号也能正确分割
+                    row_data = [item for item in re.split(r',\s*', stripped_line) if item]
                     
                     logger.debug(f"[NE Line {line_idx+1}] Parsed {len(row_data)} fields: {row_data[:5]}{'...' if len(row_data) > 5 else ''}")
 
@@ -232,8 +232,8 @@ def get_ns(ns_path: str) -> NsData:
                 rowdata = rowdata.strip()
                 if not rowdata:  # Skip empty lines
                     continue
-                # 使用正则分割处理多个空格，与get_ne保持一致
-                rowdata = re.split(r'\s+', rowdata)
+                # 使用正则分割处理多个', '，与get_ne保持一致
+                rowdata = re.split(r',\s*', rowdata)
                 # 清理空字符串
                 rowdata = [item.strip() for item in rowdata if item.strip()]
                 
@@ -934,17 +934,15 @@ def _get_crs_from_node_key(node_key: str) -> str:
     Returns:
         str: Coordinate Reference System, such as 'EPSG:4326'
     """
+    if not node_key:
+        return "EPSG:4326"
+
     # Convert node_key to path
-    # Example: .point -> point
-    parts = node_key.strip('.').split('.')
-    if len(parts) < 1:
-        logger.warning(f"Invalid node_key format: {node_key}")
-        return "EPSG:4326"  # Default to 4326
-    
-    resource_type = parts[0]
+    # Example: .HK.evaluation.fishpondline -> HK/evaluation/fishpondline
+    rel_path = node_key.strip('.').replace('.', os.sep)
     
     # Build meta.json path
-    meta_path = Path(f"resource/{resource_type}/meta.json")
+    meta_path = Path.cwd() / "resource" / rel_path / "meta.json"
     
     if not meta_path.exists():
         logger.warning(f"meta.json file not found: {meta_path}")
@@ -973,18 +971,15 @@ def _get_crs_from_schema_node_key(schema_node_key: str) -> str:
     Returns:
         str: Coordinate Reference System, such as 'EPSG:2326'
     """
+    if not schema_node_key:
+        return "EPSG:2326"
+
     # Convert schema_node_key to path
-    # Example: .schema -> resource/schema/schema.json
-    parts = schema_node_key.strip('.').split('.')
-    if len(parts) < 1:
-        logger.warning(f"Invalid schema_node_key format: {schema_node_key}")
-        return "EPSG:4326"  # Default to 4326
-    
-    # First part is resource type ('schema', 'dd', etc.)
-    resource_type = parts[0]  # 'schema'
+    # Example: .HK.schema -> resource/HK/schema/schema.json
+    rel_path = schema_node_key.strip('.').replace('.', os.sep)
     
     # Build schema.json path
-    schema_path = Path(f"resource/{resource_type}/schema.json")
+    schema_path = Path.cwd() / "resource" / rel_path / "schema.json"
     
     if not schema_path.exists():
         logger.warning(f"schema.json file not found: {schema_path}")

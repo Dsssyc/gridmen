@@ -134,6 +134,8 @@ export default function GridCreation({ node, context }: GridCreationProps) {
 
     const [, triggerRepaint] = useReducer((x) => x + 1, 0)
 
+    const demRawInputs = useRef<Map<string, string>>(new Map())
+
     useEffect(() => {
         loadContext()
 
@@ -969,15 +971,26 @@ export default function GridCreation({ node, context }: GridCreationProps) {
                                                                             </DropdownMenuContent>
                                                                         </DropdownMenu>
                                                                         <Input
-                                                                            value={item.demValue ?? ""}
+                                                                            value={demRawInputs.current.get(item.nodeInfo) ?? (item.demValue ?? "")}
                                                                             onClick={(e) => e.stopPropagation()}
                                                                             onChange={(e) => {
                                                                                 const raw = e.target.value
-                                                                                if (raw.trim() === "") {
+                                                                                demRawInputs.current.set(item.nodeInfo, raw)
+                                                                                if (raw.trim() === "" || raw.trim() === "-") {
                                                                                     item.demValue = null
                                                                                 } else {
                                                                                     const n = Number(raw)
-                                                                                    item.demValue = Number.isFinite(n) ? n : null
+
+                                                                                    // If the input is an invalid number, add error and empty value
+                                                                                    if (isNaN(n) || !Number.isFinite(n)) {
+                                                                                        toast.error("Please enter a valid number for DEM value")
+                                                                                        item.demValue = null
+                                                                                        triggerRepaint()
+                                                                                    } else {
+                                                                                        item.demValue = Number.isFinite(n) ? n : item.demValue
+                                                                                    }
+
+
                                                                                 }
                                                                                 triggerRepaint()
                                                                             }}

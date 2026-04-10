@@ -144,7 +144,7 @@ class HydroElements:
         with open(output_path, 'w') as f:
             for e in self.es:
                 ne_record = e.ne
-                f.write(' '.join(map(str, ne_record)) + '\n')
+                f.write(', '.join(map(str, ne_record)) + '\n')
 
 class HydroSides:
     def __init__(self, file_path: str):
@@ -180,7 +180,7 @@ class HydroSides:
         with open(output_path, 'w') as f:
             for s in self.ss:
                 ns_record = s.ns
-                f.write(' '.join(map(str, ns_record)) + '\n')
+                f.write(', '.join(map(str, ns_record)) + '\n')
 
 # --- Grid CRM (Customer Resource Management) module ---
 

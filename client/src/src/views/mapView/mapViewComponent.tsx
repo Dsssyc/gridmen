@@ -124,7 +124,8 @@ const MapContainer = forwardRef<HTMLDivElement, MapContainerProps>(({ onMapLoad,
                 const { mapInitialLongitude: lng, mapInitialLatitude: lat } = useSettingStore.getState()
                 const mapInstance = new mapboxgl.Map({
                     container: currentMapWrapper,
-                    style: 'mapbox://styles/mapbox/streets-v12',
+                    // style: 'mapbox://styles/mapbox/streets-v12',
+                    style: 'mapbox://styles/ycsoku/cml9j3gaq007a01qx7nxa6zbr',
                     projection: 'globe',
                     center: [lng, lat],
                     zoom: initialZoom,

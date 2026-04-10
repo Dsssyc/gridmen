@@ -41,7 +41,8 @@ export default class PatchCore {
         // Init metadata
         this._lockId = context.lockId
         this.nodeInfo = context.nodeInfo
-        this.maxCellNum = options.maxCellNum ?? 4096 * 4096
+        // this.maxCellNum = options.maxCellNum ?? 4096 * 4096
+        this.maxCellNum = options.maxCellNum ?? 25000000
         this.levelInfos = new Array<PatchLevelInfo>(this.context.rules.length)
         this.context.rules.forEach((_, level, rules) => {
             let width: number, height: number
