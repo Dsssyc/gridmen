@@ -1126,7 +1126,7 @@ def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str]
                 schema_file_path, patch_node_key,
                 meta_bounds, meta_level_info
             )
-        print(f'All activated cell num: {len(activated_cell_keys)}')
+        print(f'All activated cell num: {len(activated_cell_keys)}', flush=True)
         
         # Filter activated cells to remove conflicts
         # Conflict: if a cell is activated, all its ancestors must be deactivated
@@ -1138,19 +1138,22 @@ def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str]
                 ancestor_keys_to_remove.update(ancestor_keys)
             # Batch remove ancestor keys from activated cells in the level
             activated_cell_keys.difference_update(ancestor_keys_to_remove)
-        print(f'Activated cell calculation took {time.time() - current_time:.2f} seconds')
+        print(f'Activated cell calculation took {time.time() - current_time:.2f} seconds', flush=True)
         
         # Grading cells by risk level #########################################################
         
         # Remove low-risk cells if grading_threshold >= 0
         if grading_threshold >= 0:
             current_time = time.time()
+            iteration = 0
             while True:
                 risk_cells = _find_risk_cells(grading_threshold, activated_cell_keys, subdivide_rules, meta_level_info)
                 if not risk_cells:
                     break
                 activated_cell_keys = _refine_risk_cells(risk_cells, subdivide_rules, meta_level_info).union(activated_cell_keys.difference(risk_cells))
-            print(f'Risk cell refinement took {time.time() - current_time:.2f} seconds')
+                iteration += 1
+                print(f'  Risk refinement iteration {iteration}: {len(risk_cells)} risk cells → {len(activated_cell_keys)} total', flush=True)
+            print(f'Risk cell refinement took {time.time() - current_time:.2f} seconds ({iteration} iterations)', flush=True)
         
         # Topology construction for the grid ##################################################
         
@@ -1163,7 +1166,9 @@ def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str]
         gc.collect()
         
         # Init GridCache
+        print(f'Initializing GridCache for {len(keys_data)//9:,} cells...', flush=True)
         grid_cache = GridCache(keys_data)
+        print(f'GridCache initialized.', flush=True)
         
         # Init edge topology containers
         edge_index_cache: list[bytes] = []
@@ -1173,15 +1178,15 @@ def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str]
         # Step 1: Calculate all cell neighbours
         current_time = time.time()
         _find_cell_neighbours(grid_cache, subdivide_rules, meta_level_info)
-        print(f'Cell neighbour calculation took {time.time() - current_time:.2f} seconds')
+        print(f'Cell neighbour calculation took {time.time() - current_time:.2f} seconds', flush=True)
 
         # Step 2: Calculate all cell edges
         current_time = time.time()
         _calc_cell_edges(grid_cache, meta_level_info, edge_index_cache, edge_index_dict, edge_adj_cell_indices)
-        print(f'Cell edge calculation took {time.time() - current_time:.2f} seconds')
+        print(f'Cell edge calculation took {time.time() - current_time:.2f} seconds', flush=True)
         
-        print(f'Find cells: {len(grid_cache)}')
-        print(f'Find cell edges: {len(edge_index_cache)}')
+        print(f'Find cells: {len(grid_cache)}', flush=True)
+        print(f'Find cell edges: {len(edge_index_cache)}', flush=True)
         
         # Step 3: Record grid topology ########################################################
         
