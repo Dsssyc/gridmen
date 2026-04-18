@@ -485,7 +485,11 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                                             for (const fid of pageContext.current.editedVectorIds) {
                                                 drawInstance.setFeatureProperty(fid, "color", hex)
                                             }
-                                            drawInstance.set(drawInstance.getAll())
+                                            try {
+                                                drawInstance.add(getNodeFeatures())
+                                            } catch (e) {
+                                                console.error("Failed to refresh draw features after color change:", e)
+                                            }
                                             triggerRepaint()
                                         }}
                                     >

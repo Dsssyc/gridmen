@@ -1,5 +1,6 @@
 import os
 import json
+import copy
 import shutil
 import zipfile
 from typing import Any
@@ -60,6 +61,12 @@ class Vector:
             
             # Clean invalid features
             feature_collection = self._clean_invalid_feature(feature_collection)
+            
+            # Transform from display CRS (4326) to storage CRS (self.epsg)
+            if self.epsg and self.epsg != DEFAULT_EPSG:
+                feature_collection = self._transform_geojson_coordinates_strict(
+                    feature_collection, DEFAULT_EPSG, self.epsg
+                )
             
             with open(feature_path, 'w', encoding='utf-8') as f:
                 json.dump(feature_collection, f, ensure_ascii=False, indent=2)
@@ -143,45 +150,42 @@ class Vector:
     def get_feature_json_computation(self) -> dict[str, Any]:
         """
         Get feature json for computation
-        Transform coordinates from EPSG:4326 (storage CRS) to self.epsg (computation CRS)
+        --
+        Data is stored on disk in self.epsg (source CRS).
+        Returns as-is since computation needs coordinates in the source CRS.
         """
         file_path = os.path.join(self.path, self.name + '.geojson')
         with open(file_path, 'r', encoding='utf-8') as f:
-            geojson_data = json.load(f)
-        
-        # If target EPSG is the same as storage EPSG (4326), return as is
-        if self.epsg == DEFAULT_EPSG:
-            logger.info('No transformation needed, returning GeoJSON as is')
-            return geojson_data
-        logger.info(f'Transforming GeoJSON coordinates from EPSG:4326 to EPSG:{self.epsg}')
-        # Transform coordinates from 4326 to target EPSG
-        return self._transform_geojson_coordinates(geojson_data, DEFAULT_EPSG, self.epsg)
+            return json.load(f)
 
     def update_feature(self, update_body: UpdateFeatureBody) -> dict[str, bool | str]:
         self.epsg = update_body.epsg
         self.color = update_body.color
         feature_json = update_body.feature_json
         
-        # Update meta information
-        meta = VectorMeta(
-            name=self.name,
-            epsg=self.epsg,
-            color=self.color
-        )
-        with open(self.meta_path, 'w', encoding='utf-8') as f:
-            f.write(meta.model_dump_json(indent=2))
-        
-        # Ensure the feature_json is in FeatureCollection format
         file_path = os.path.join(self.path, self.name + '.geojson')
         try:
-            # Ensure the feature_json is in FeatureCollection format
             feature_collection = self._ensure_feature_collection(feature_json)
-            
-            # Clean invalid features
             feature_collection = self._clean_invalid_feature(feature_collection)
             
+            # Transform from display CRS (4326) to storage CRS (self.epsg)
+            if self.epsg and self.epsg != DEFAULT_EPSG:
+                feature_collection = self._transform_geojson_coordinates_strict(
+                    feature_collection, DEFAULT_EPSG, self.epsg
+                )
+            
+            # Write geojson first, then meta (safer ordering)
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(feature_collection, f, ensure_ascii=False, indent=2)
+            
+            meta = VectorMeta(
+                name=self.name,
+                epsg=self.epsg,
+                color=self.color
+            )
+            with open(self.meta_path, 'w', encoding='utf-8') as f:
+                f.write(meta.model_dump_json(indent=2))
+            
             return {
                 'success': True,
                 'message': 'Feature updated successfully',
@@ -298,39 +302,36 @@ class Vector:
     def _transform_geojson_coordinates(self, geojson_data: dict, source_epsg: str, target_epsg: str) -> dict:
         """
         Transform GeoJSON coordinates from source EPSG to target EPSG
-        
-        Args:
-            geojson_data: GeoJSON FeatureCollection with coordinates in source CRS
-            source_epsg: Source EPSG code (e.g., "4326")
-            target_epsg: Target EPSG code (e.g., "3857")
-            
-        Returns:
-            GeoJSON FeatureCollection with transformed coordinates
+        --
+        Gracefully falls back to original data on failure (used for display).
         """
         try:
-            # Create spatial reference systems
-            source_srs = osr.SpatialReference()
-            source_srs.ImportFromEPSG(int(source_epsg))
-            # Set axis mapping to traditional GIS order (longitude, latitude)
-            source_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-            
-            target_srs = osr.SpatialReference()
-            target_srs.ImportFromEPSG(int(target_epsg))
-            # Set axis mapping to traditional GIS order (longitude, latitude)
-            target_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-            
-            # Transform coordinates for each feature in the FeatureCollection
-            features = geojson_data.get('features', [])
-            for feature in features:
-                if feature.get('geometry'):
-                    self._transform_geometry_ogr(feature['geometry'], source_srs, target_srs)
-            
-            return geojson_data
-            
+            return self._transform_geojson_coordinates_strict(geojson_data, source_epsg, target_epsg)
         except Exception as e:
             logger.error(f'Failed to transform coordinates from EPSG:{source_epsg} to EPSG:{target_epsg}: {str(e)}')
-            # Return original data if transformation fails
             return geojson_data
+    
+    def _transform_geojson_coordinates_strict(self, geojson_data: dict, source_epsg: str, target_epsg: str) -> dict:
+        """
+        Transform GeoJSON coordinates from source EPSG to target EPSG
+        --
+        Raises on failure (used for save paths to prevent silent data corruption).
+        """
+        source_srs = osr.SpatialReference()
+        source_srs.ImportFromEPSG(int(source_epsg))
+        source_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        
+        target_srs = osr.SpatialReference()
+        target_srs.ImportFromEPSG(int(target_epsg))
+        target_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        
+        result = copy.deepcopy(geojson_data)
+        features = result.get('features', [])
+        for feature in features:
+            if feature.get('geometry'):
+                self._transform_geometry_ogr_strict(feature['geometry'], source_srs, target_srs)
+        
+        return result
     
     def _transform_geometry_ogr(self, geometry: dict, source_srs, target_srs) -> None:
         """
@@ -363,6 +364,24 @@ class Vector:
         except Exception as e:
             logger.error(f'Failed to transform geometry using OGR: {str(e)}')
             # Keep original geometry if transformation fails
+    
+    def _transform_geometry_ogr_strict(self, geometry: dict, source_srs, target_srs) -> None:
+        """
+        Transform geometry using OGR (strict version that raises on failure)
+        """
+        geom_str = json.dumps(geometry)
+        ogr_geom = ogr.CreateGeometryFromJson(geom_str)
+        
+        if ogr_geom is None:
+            raise ValueError(f"Failed to create OGR geometry from: {geometry.get('type', 'unknown')}")
+        
+        ogr_geom.AssignSpatialReference(source_srs)
+        err = ogr_geom.TransformTo(target_srs)
+        if err != 0:
+            raise RuntimeError(f"OGR coordinate transformation failed with error code {err}")
+        
+        transformed_json = json.loads(ogr_geom.ExportToJson())
+        geometry.update(transformed_json)
     
     def _shp_to_geojson_with_epsg(self, shp_path):
         """

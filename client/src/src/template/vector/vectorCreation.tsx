@@ -518,7 +518,11 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                                             for (const fid of pageContext.current.createdVectorIds) {
                                                 drawInstance.setFeatureProperty(fid, "color", hex)
                                             }
-                                            drawInstance.set(drawInstance.getAll())
+                                            try {
+                                                drawInstance.add(getNodeFeatures())
+                                            } catch (e) {
+                                                console.error("Failed to refresh draw features after color change:", e)
+                                            }
                                             triggerRepaint()
                                         }}
                                     >
