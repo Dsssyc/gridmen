@@ -9,11 +9,11 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { linkNode } from '../api/node'
 import { PatchMeta } from '../api/types'
 import * as api from '../api/apis'
-import { convertBoundsCoordinates, waitForCustomLayerGroup, waitForMapLoad } from '@/utils/utils'
+import { convertBoundsCoordinates, waitForMapLoad } from '@/utils/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import TopologyLayer from '@/views/mapView/topology/TopologyLayer'
-import CustomLayerGroup from '@/views/mapView/topology/customLayerGroup'
-import { ensureTopologyLayerInitialized, getOrCreateTopologyLayer } from '@/views/mapView/topology/topologyLayerManager'
+import { ensureTopologyLayerInitialized, getOrCreatePerPatchTopology } from '@/views/mapView/topology/topologyLayerManager'
+import { layerOrderCoordinator } from '@/views/mapView/layerOrderCoordinator'
 import store from '@/store/store'
 import PatchCore from '@/core/grid/patchCore'
 import { PatchContext } from '@/core/grid/types'
@@ -29,6 +29,7 @@ interface PageContext {
     patch: PatchMeta | null
     topologyLayer: TopologyLayer | null
     boundsOn4326: [number, number, number, number] | null
+    perPatchCLGId: string | null
 }
 
 const topologyTips = [
@@ -47,6 +48,7 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
         patch: null,
         topologyLayer: null,
         boundsOn4326: null,
+        perPatchCLGId: null,
     })
 
     const [, triggerRepaint] = useReducer(x => x + 1, 0)
@@ -85,8 +87,6 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
 
         await waitForMapLoad(map)
 
-        const clg = await waitForCustomLayerGroup()
-
         const gridContext: PatchContext = {
             nodeInfo: node.nodeInfo,
             lockId: (node as ResourceNode).lockId!,
@@ -96,7 +96,10 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
             rules: pageContext.current!.patch!.subdivide_rules
         }
 
-        const gridLayer = getOrCreateTopologyLayer(clg, map, topologyLayerId)
+        const { clgId, topologyLayer: gridLayer } = getOrCreatePerPatchTopology(
+            map, node.nodeInfo, topologyLayerId,
+        )
+        pageContext.current.perPatchCLGId = clgId
 
         const patchCore: PatchCore = new PatchCore(gridContext)
         await ensureTopologyLayerInitialized(gridLayer, map)
@@ -104,7 +107,7 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
         gridLayer.patchCore = patchCore
         pageContext.current.topologyLayer = gridLayer
 
-        // setTopologyLayer(gridLayer)
+        layerOrderCoordinator.register(node.nodeInfo, [clgId])
 
         map.fitBounds(pageContext.current.boundsOn4326!, {
             padding: 200,
@@ -116,10 +119,11 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
             __cleanup: {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
                 topology: () => {
-                    const clg = store.get<CustomLayerGroup>('clg')
-                    clg?.removeLayer(topologyLayerId)
-
+                    const id = pageContext.current.perPatchCLGId
+                    if (id && map.getLayer(id)) map.removeLayer(id)
+                    pageContext.current.perPatchCLGId = null
                     pageContext.current.topologyLayer = null
+                    layerOrderCoordinator.unregister(node.nodeInfo)
                 },
             },
         }
@@ -143,10 +147,11 @@ export default function PatchCheck({ node, context }: PatchCheckProps) {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
 
                 topology: () => {
-                    const clg = store.get<CustomLayerGroup>('clg')
-                    clg?.removeLayer(topologyLayerId)
-
+                    const id = pageContext.current.perPatchCLGId
+                    if (id && map.getLayer(id)) map.removeLayer(id)
+                    pageContext.current.perPatchCLGId = null
                     pageContext.current.topologyLayer = null
+                    layerOrderCoordinator.unregister(node.nodeInfo)
                 },
             }
         }
