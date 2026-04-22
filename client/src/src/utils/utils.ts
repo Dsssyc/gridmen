@@ -1,10 +1,8 @@
 import proj4 from 'proj4'
 import mapboxgl from 'mapbox-gl'
-import store from '@/store/store'
 import { twMerge } from "tailwind-merge"
 import * as apis from '@/template/api/apis'
 import { clsx, type ClassValue } from "clsx"
-import CustomLayerGroup from '@/views/mapView/topology/customLayerGroup'
 
 export const vectorColorMap = [
     { value: "sky-500", color: "#0ea5e9", name: "Sky" },
@@ -77,20 +75,6 @@ export const waitForDrawInstanceLoad = (drawInstance: any) => {
             }
         }
         checkDraw()
-    })
-}
-
-export const waitForCustomLayerGroup = () => {
-    return new Promise<CustomLayerGroup>((resolve) => {
-        const checkClg = () => {
-            const clg = store.get<CustomLayerGroup>('clg')!
-            if (clg) {
-                resolve(clg)
-            } else {
-                setTimeout(checkClg, 100)
-            }
-        }
-        checkClg()
     })
 }
 

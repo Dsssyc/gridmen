@@ -64,18 +64,3 @@ export async function ensureTopologyLayerInitialized(layer: TopologyLayer, map: 
     }
     await typed.__nh_initPromise
 }
-
-// Deprecated shim during migration (removed in Task 9 cleanup).
-export function getOrCreateTopologyLayer(
-    clg: CustomLayerGroup,
-    map: MapboxMap,
-    layerId: string,
-): TopologyLayer {
-    const existing = clg.getLayerInstance(layerId) as TopologyLayer | null
-    if (existing) return existing
-
-    const layer = new TopologyLayer(map)
-    layer.id = layerId
-    clg.addLayer(layer)
-    return layer
-}
