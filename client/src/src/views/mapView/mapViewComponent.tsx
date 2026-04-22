@@ -15,6 +15,7 @@ import MapView, { MapViewContext } from './mapView'
 import { VIEW_REGISTRY } from '@/registry/viewRegistry'
 import { IResourceNode } from '@/template/scene/iscene'
 import CustomLayerGroup from './topology/customLayerGroup'
+import { layerOrderCoordinator } from './layerOrderCoordinator'
 import { calculateRectangleCoordinates, debounce } from '@/utils/utils'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 
@@ -145,6 +146,7 @@ const MapContainer = forwardRef<HTMLDivElement, MapContainerProps>(({ onMapLoad,
                     layerGroup.id = 'gridman-custom-layer-group'
                     mapInstance.addLayer(layerGroup)
                     store.set('clg', layerGroup)
+                    layerOrderCoordinator.setMap(mapInstance)
                 })
 
                 const drawColor = '#F06B00'
