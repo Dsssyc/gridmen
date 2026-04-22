@@ -33,6 +33,8 @@ import type { IResourceNode } from "../scene/iscene"
 import { MapViewContext } from "@/views/mapView/mapView"
 import type { IViewContext } from "@/views/IViewContext"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { addVectorDisplay, tagVectorColor, VectorDisplayHandle } from "@/views/mapView/vectorDisplayLayer"
+import { layerOrderCoordinator } from "@/views/mapView/layerOrderCoordinator"
 
 interface VectorEditProps {
     node: IResourceNode
@@ -49,6 +51,7 @@ interface PageContext {
         color: string
     }
     editedVectorIds: Set<string>
+    displayHandle: VectorDisplayHandle | null
 }
 
 const vectorTips = [
@@ -97,6 +100,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
             color: "sky-500",
         },
         editedVectorIds: new Set<string>(),
+        displayHandle: null,
     })
 
     const [, triggerRepaint] = useReducer((x) => x + 1, 0)
@@ -143,10 +147,17 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
         pageContext.current.vectorData.color = (node as ResourceNode).mountParams.color
         pageContext.current.drawVector = (node as ResourceNode).mountParams.feature_json
 
+        const hex = getHexColorByValue(pageContext.current.vectorData.color)
+        const fcCopy: GeoJSON.FeatureCollection = JSON.parse(JSON.stringify(pageContext.current.drawVector!))
+        tagVectorColor(fcCopy, hex)
+        const handle = addVectorDisplay(map, node.nodeInfo, fcCopy)
+        handle.setVisible(false)
+        pageContext.current.displayHandle = handle
+        layerOrderCoordinator.register(node.nodeInfo, handle.mapboxLayerIds)
+
         const addedIds = drawInstance.add(pageContext.current.drawVector!) as string[]
         addedIds.forEach((id) => pageContext.current.editedVectorIds.add(id))
 
-        const hex = getHexColorByValue(pageContext.current.vectorData.color)
         for (const fid of pageContext.current.editedVectorIds) {
             drawInstance.setFeatureProperty(fid, "color", hex)
         };
@@ -157,9 +168,19 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
                 vectorEdit: () => {
                     const featureIds = Array.from(pageContext.current.editedVectorIds)
+                    const h = pageContext.current.displayHandle
+                    if (h) {
+                        const fc = getNodeFeatures()
+                        const hx = getHexColorByValue(pageContext.current.vectorData.color)
+                        tagVectorColor(fc, hx)
+                        h.setData(fc)
+                        h.setVisible(true)
+                        h.remove()
+                        pageContext.current.displayHandle = null
+                    }
                     drawInstance.delete(featureIds)
-                    pageContext.current.editedVectorIds.clear();
-
+                    pageContext.current.editedVectorIds.clear()
+                    layerOrderCoordinator.unregister(node.nodeInfo);
                     (node as ResourceNode).mountParams = undefined
                 }
             },
@@ -178,8 +199,19 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
                 vectorEdit: () => {
                     const featureIds = Array.from(pageContext.current.editedVectorIds)
+                    const h = pageContext.current.displayHandle
+                    if (h) {
+                        const fc = getNodeFeatures()
+                        const hx = getHexColorByValue(pageContext.current.vectorData.color)
+                        tagVectorColor(fc, hx)
+                        h.setData(fc)
+                        h.setVisible(true)
+                        h.remove()
+                        pageContext.current.displayHandle = null
+                    }
                     drawInstance.delete(featureIds)
                     pageContext.current.editedVectorIds.clear()
+                    layerOrderCoordinator.unregister(node.nodeInfo)
                 }
             },
         }
@@ -335,6 +367,12 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
             await api.vector.updateVector(node.nodeInfo, lockId, updateData);
 
             (node as ResourceNode).mountParams = undefined
+
+            const fc = getNodeFeatures()
+            const hex = getHexColorByValue(pageContext.current.vectorData.color)
+            tagVectorColor(fc, hex)
+            pageContext.current.displayHandle?.setData(fc)
+
             toast.success("Vector updated successfully")
         } catch (error) {
             console.error("Failed to update vector:", error)
