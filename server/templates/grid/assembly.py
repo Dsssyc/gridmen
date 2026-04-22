@@ -799,6 +799,18 @@ def _generate_cell_record(
         *['Q'] * len(edges[EdgeCode.NORTH]),    # north edge indices (list of uint64)
     ]
     
+    # Validate all 'B' fields before packing
+    b_field_names = ['lum_type', 'west_edge_count', 'east_edge_count', 'south_edge_count', 'north_edge_count']
+    b_field_values = [lum_type, len(edges[EdgeCode.WEST]), len(edges[EdgeCode.EAST]), len(edges[EdgeCode.SOUTH]), len(edges[EdgeCode.NORTH])]
+    for fname, fval in zip(b_field_names, b_field_values):
+        if not (0 <= fval <= 255):
+            raise ValueError(
+                f"Cell record uint8 overflow: {fname}={fval} (valid: 0-255). "
+                f"cell index={index + 1}, level={level}, global_id={global_id}, "
+                f"center=({(min_xs + max_xs) / 2:.2f}, {(min_ys + max_ys) / 2:.2f}), "
+                f"all B fields: {dict(zip(b_field_names, b_field_values))}"
+            )
+
     packed_record = bytearray()
     for value, value_type in zip(unpacked_info, unpacked_info_type):
         if value_type == 'Q':  # uint64
@@ -848,6 +860,10 @@ def _get_raster_value(src, x: float, y: float, src_crs: str = "EPSG:4326") -> fl
             return None
             
         val = data[0, 0]
+
+        # Check for NaN (possible with floating-point rasters)
+        if np.issubdtype(data.dtype, np.floating) and np.isnan(val):
+            return None
         
         # --- KEY FIX: Rely on np.isclose for float comparison ---
         if src.nodata is not None:
@@ -900,7 +916,14 @@ def _batch_cell_records_worker(
             if lum_src:
                 val = _get_raster_value(lum_src, center_x, center_y, src_crs=src_crs)
                 if val is not None:
-                    lum_type = int(val)
+                    raw_lum = int(val)
+                    if not (0 <= raw_lum <= 255):
+                        print(f"[WARNING] Cell lum_type={raw_lum} out of uint8 range at ({center_x:.2f}, {center_y:.2f}), "
+                              f"raw_val={val}, raster_dtype={lum_src.dtypes[0]}, nodata={lum_src.nodata}. Clamping to 0.",
+                              flush=True)
+                        lum_type = 0
+                    else:
+                        lum_type = raw_lum
             
             # Generate cell record
             record =  _generate_cell_record(offset + i, key, edges, bbox, meta_level_info, grid_info, altitude, lum_type)

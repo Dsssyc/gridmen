@@ -81,7 +81,7 @@ def write_ne(ne_path: str, ne_data: NeData) -> None:
             row_parts.append(f"{ne_data.ze_list[i]:.14g}")
             row_parts.append(f"{ne_data.under_suf_list[i]}")
             
-            f.write(' '.join(row_parts) + '\n')
+            f.write(', '.join(row_parts) + '\n')
 
 def write_ns(ns_path: str, ns_data: NsData) -> None:
     """
@@ -108,7 +108,7 @@ def write_ns(ns_path: str, ns_data: NsData) -> None:
             row_parts.append(f"{ns_data.z_side_list[i]:.14g}")
             row_parts.append(f"{ns_data.s_type_list[i]}")
             
-            f.write(' '.join(row_parts) + '\n')
+            f.write(', '.join(row_parts) + '\n')
 
 def get_ne(ne_path: str) -> "NeData":
     # 初始化列表（含占位符 0）
