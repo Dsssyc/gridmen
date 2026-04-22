@@ -123,7 +123,7 @@ export const useLayerStore = create<LayerStore>((set) => ({
 
                     return {
                         ...layer,
-                        children: [...children, nextLayer],
+                        children: [nextLayer, ...children],
                     }
                 })
             }

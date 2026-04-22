@@ -13,6 +13,8 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
+import { addVectorDisplay, tagVectorColor, VectorDisplayHandle } from '@/views/mapView/vectorDisplayLayer'
+import { layerOrderCoordinator } from '@/views/mapView/layerOrderCoordinator'
 
 interface VectorCheckProps {
     node: IResourceNode
@@ -28,6 +30,7 @@ interface PageContext {
         color: string
     }
     checkedVectorIds: Set<string>
+    displayHandle: VectorDisplayHandle | null
 }
 
 const vectorTips = [
@@ -62,6 +65,7 @@ export default function VectorCheck({ node, context }: VectorCheckProps) {
             color: "sky-500",
         },
         checkedVectorIds: new Set<string>(),
+        displayHandle: null,
     })
 
     const [, triggerRepaint] = useReducer((x) => x + 1, 0)
@@ -92,22 +96,23 @@ export default function VectorCheck({ node, context }: VectorCheckProps) {
         pageContext.current.vectorData.name = (node as ResourceNode).mountParams.name
         pageContext.current.drawVector = (node as ResourceNode).mountParams.feature_json
 
-        const addedIds = drawInstance.add(pageContext.current.drawVector!) as string[]
-        addedIds.forEach((id) => pageContext.current.checkedVectorIds.add(id))
-
         const hex = getHexColorByValue(pageContext.current.vectorData.color)
-        for (const fid of pageContext.current.checkedVectorIds) {
-            drawInstance.setFeatureProperty(fid, "color", hex)
-        };
+        // Display via per-vector mapbox layers so panel z-order applies
+        const fcCopy: GeoJSON.FeatureCollection = JSON.parse(JSON.stringify(pageContext.current.drawVector!))
+        tagVectorColor(fcCopy, hex)
+        const handle = addVectorDisplay(map, node.nodeInfo, fcCopy)
+        pageContext.current.displayHandle = handle
+        layerOrderCoordinator.register(node.nodeInfo, handle.mapboxLayerIds)
 
         (node as ResourceNode).context = {
             ...((node as ResourceNode).context ?? {}),
             __cleanup: {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
                 vectorCheck: () => {
-                    const featureIds = Array.from(pageContext.current.checkedVectorIds)
-                    drawInstance.delete(featureIds)
+                    pageContext.current.displayHandle?.remove()
+                    pageContext.current.displayHandle = null
                     pageContext.current.checkedVectorIds.clear()
+                    layerOrderCoordinator.unregister(node.nodeInfo)
                 }
             },
         }
@@ -125,9 +130,10 @@ export default function VectorCheck({ node, context }: VectorCheckProps) {
             __cleanup: {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
                 vectorCheck: () => {
-                    const featureIds = Array.from(pageContext.current.checkedVectorIds)
-                    drawInstance.delete(featureIds)
+                    pageContext.current.displayHandle?.remove()
+                    pageContext.current.displayHandle = null
                     pageContext.current.checkedVectorIds.clear()
+                    layerOrderCoordinator.unregister(node.nodeInfo)
                 }
             },
         }

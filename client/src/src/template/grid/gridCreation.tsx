@@ -307,16 +307,31 @@ export default function GridCreation({ node, context }: GridCreationProps) {
     }
 
     const handleVectorItemDrop = (index: number) => (e: React.DragEvent<HTMLDivElement>) => {
-        e.preventDefault()
-
         const raw = e.dataTransfer.getData("application/gridmen-vector-reorder")
-        const payload = JSON.parse(raw)
+        // Not a reorder drag (e.g., dropping a new vector from EXPLORER) — let outer dropzone handle it.
+        if (!raw) return
+
+        e.preventDefault()
+        e.stopPropagation()
+
+        let payload: { fromIndex?: number } | null = null
+        try {
+            payload = JSON.parse(raw)
+        } catch {
+            return
+        }
 
         const fromIndex = payload?.fromIndex
+        if (typeof fromIndex !== "number" || fromIndex === index) return
+
         const list = pageContext.current.selectedVectors
+        if (fromIndex < 0 || fromIndex >= list.length) return
 
         const [moved] = list.splice(fromIndex, 1)
-        list.splice(index, 0, moved)
+        // After splice removal, indices above fromIndex shift down by 1. Adjust target accordingly
+        // so the dragged item lands at the visual position of the drop target.
+        const targetIndex = fromIndex < index ? index - 1 : index
+        list.splice(targetIndex, 0, moved)
 
         triggerRepaint()
     }

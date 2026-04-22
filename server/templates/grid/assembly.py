@@ -17,6 +17,8 @@ from icrms.ipatch import IPatch
 from functools import partial
 from rasterio.warp import transform
 
+from ._timing import timed, timing_logger
+
 # --- Define Constants and Enums locally or import if shared ---
 EDGE_CODE_INVALID = -1
 class EdgeCode(IntEnum):
@@ -799,6 +801,18 @@ def _generate_cell_record(
         *['Q'] * len(edges[EdgeCode.NORTH]),    # north edge indices (list of uint64)
     ]
     
+    # Validate all 'B' fields before packing
+    b_field_names = ['lum_type', 'west_edge_count', 'east_edge_count', 'south_edge_count', 'north_edge_count']
+    b_field_values = [lum_type, len(edges[EdgeCode.WEST]), len(edges[EdgeCode.EAST]), len(edges[EdgeCode.SOUTH]), len(edges[EdgeCode.NORTH])]
+    for fname, fval in zip(b_field_names, b_field_values):
+        if not (0 <= fval <= 255):
+            raise ValueError(
+                f"Cell record uint8 overflow: {fname}={fval} (valid: 0-255). "
+                f"cell index={index + 1}, level={level}, global_id={global_id}, "
+                f"center=({(min_xs + max_xs) / 2:.2f}, {(min_ys + max_ys) / 2:.2f}), "
+                f"all B fields: {dict(zip(b_field_names, b_field_values))}"
+            )
+
     packed_record = bytearray()
     for value, value_type in zip(unpacked_info, unpacked_info_type):
         if value_type == 'Q':  # uint64
@@ -848,6 +862,10 @@ def _get_raster_value(src, x: float, y: float, src_crs: str = "EPSG:4326") -> fl
             return None
             
         val = data[0, 0]
+
+        # Check for NaN (possible with floating-point rasters)
+        if np.issubdtype(data.dtype, np.floating) and np.isnan(val):
+            return None
         
         # --- KEY FIX: Rely on np.isclose for float comparison ---
         if src.nodata is not None:
@@ -900,7 +918,14 @@ def _batch_cell_records_worker(
             if lum_src:
                 val = _get_raster_value(lum_src, center_x, center_y, src_crs=src_crs)
                 if val is not None:
-                    lum_type = int(val)
+                    raw_lum = int(val)
+                    if not (0 <= raw_lum <= 255):
+                        print(f"[WARNING] Cell lum_type={raw_lum} out of uint8 range at ({center_x:.2f}, {center_y:.2f}), "
+                              f"raw_val={val}, raster_dtype={lum_src.dtypes[0]}, nodata={lum_src.nodata}. Clamping to 0.",
+                              flush=True)
+                        lum_type = 0
+                    else:
+                        lum_type = raw_lum
             
             # Generate cell record
             record =  _generate_cell_record(offset + i, key, edges, bbox, meta_level_info, grid_info, altitude, lum_type)
@@ -1112,59 +1137,77 @@ def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str]
             })
         
         # Find activated cells in all patches #################################################
-        
+
         current_time = time.time()
-        
+
         # Set activated cell key container
         # Key: uin8 level + uint64 global id
         activated_cell_keys: set[bytes] = set()
-        
+
         # Update activated cells by each patch
-        for patch_node_key in patch_node_keys:
-            _update_cells_by_patch(
-                activated_cell_keys,
-                schema_file_path, patch_node_key,
-                meta_bounds, meta_level_info
-            )
-        print(f'All activated cell num: {len(activated_cell_keys)}')
-        
+        with timed("assembly.update_cells_by_patches", n_patches=len(patch_node_keys)):
+            for patch_node_key in patch_node_keys:
+                with timed("assembly.update_cells_by_patch", patch=patch_node_key):
+                    _update_cells_by_patch(
+                        activated_cell_keys,
+                        schema_file_path, patch_node_key,
+                        meta_bounds, meta_level_info
+                    )
+        print(f'All activated cell num: {len(activated_cell_keys)}', flush=True)
+        timing_logger.debug("assembly.activated_cells count=%d", len(activated_cell_keys))
+
         # Filter activated cells to remove conflicts
         # Conflict: if a cell is activated, all its ancestors must be deactivated
-        for level in range(len(meta_level_info), 1, -1):    # from highest level to level 2 (level 1 has no parent)
-            keys_at_level = [k for k in activated_cell_keys if k[0] == level]
-            ancestor_keys_to_remove: set[bytes] = set()
-            for key in keys_at_level:
-                ancestor_keys = _get_all_ancestor_keys(key, meta_level_info, subdivide_rules)
-                ancestor_keys_to_remove.update(ancestor_keys)
-            # Batch remove ancestor keys from activated cells in the level
-            activated_cell_keys.difference_update(ancestor_keys_to_remove)
-        print(f'Activated cell calculation took {time.time() - current_time:.2f} seconds')
-        
+        with timed("assembly.filter_ancestor_conflicts"):
+            for level in range(len(meta_level_info), 1, -1):    # from highest level to level 2 (level 1 has no parent)
+                keys_at_level = [k for k in activated_cell_keys if k[0] == level]
+                ancestor_keys_to_remove: set[bytes] = set()
+                for key in keys_at_level:
+                    ancestor_keys = _get_all_ancestor_keys(key, meta_level_info, subdivide_rules)
+                    ancestor_keys_to_remove.update(ancestor_keys)
+                # Batch remove ancestor keys from activated cells in the level
+                activated_cell_keys.difference_update(ancestor_keys_to_remove)
+        elapsed_total = time.time() - current_time
+        print(f'Activated cell calculation took {elapsed_total:.2f} seconds', flush=True)
+        timing_logger.debug("assembly.activated_cell_phase total=%.4fs", elapsed_total)
+
         # Grading cells by risk level #########################################################
-        
+
         # Remove low-risk cells if grading_threshold >= 0
         if grading_threshold >= 0:
             current_time = time.time()
-            while True:
-                risk_cells = _find_risk_cells(grading_threshold, activated_cell_keys, subdivide_rules, meta_level_info)
-                if not risk_cells:
-                    break
-                activated_cell_keys = _refine_risk_cells(risk_cells, subdivide_rules, meta_level_info).union(activated_cell_keys.difference(risk_cells))
-            print(f'Risk cell refinement took {time.time() - current_time:.2f} seconds')
-        
+            iteration = 0
+            with timed("assembly.risk_refinement_phase"):
+                while True:
+                    with timed("assembly.find_risk_cells", iteration=iteration + 1):
+                        risk_cells = _find_risk_cells(grading_threshold, activated_cell_keys, subdivide_rules, meta_level_info)
+                    if not risk_cells:
+                        break
+                    with timed("assembly.refine_risk_cells", iteration=iteration + 1, n_risk=len(risk_cells)):
+                        activated_cell_keys = _refine_risk_cells(risk_cells, subdivide_rules, meta_level_info).union(activated_cell_keys.difference(risk_cells))
+                    iteration += 1
+                    print(f'  Risk refinement iteration {iteration}: {len(risk_cells)} risk cells → {len(activated_cell_keys)} total', flush=True)
+            elapsed_total = time.time() - current_time
+            print(f'Risk cell refinement took {elapsed_total:.2f} seconds ({iteration} iterations)', flush=True)
+            timing_logger.debug("assembly.risk_refinement total=%.4fs iterations=%d", elapsed_total, iteration)
+
         # Topology construction for the grid ##################################################
-        
+
         # Sort and concatenate activated cell keys (convert to list first to avoid transient peak)
-        sorted_keys = sorted(activated_cell_keys)
-        activated_cell_keys = None
-        gc.collect()
-        keys_data = b''.join(sorted_keys)
-        del sorted_keys
-        gc.collect()
-        
+        with timed("assembly.sort_and_pack_keys", n_keys=len(activated_cell_keys)):
+            sorted_keys = sorted(activated_cell_keys)
+            activated_cell_keys = None
+            gc.collect()
+            keys_data = b''.join(sorted_keys)
+            del sorted_keys
+            gc.collect()
+
         # Init GridCache
-        grid_cache = GridCache(keys_data)
-        
+        print(f'Initializing GridCache for {len(keys_data)//9:,} cells...', flush=True)
+        with timed("assembly.init_grid_cache", n_cells=len(keys_data) // 9):
+            grid_cache = GridCache(keys_data)
+        print(f'GridCache initialized.', flush=True)
+
         # Init edge topology containers
         edge_index_cache: list[bytes] = []
         edge_index_dict: dict[int, bytes] = {}
@@ -1172,43 +1215,47 @@ def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str]
 
         # Step 1: Calculate all cell neighbours
         current_time = time.time()
-        _find_cell_neighbours(grid_cache, subdivide_rules, meta_level_info)
-        print(f'Cell neighbour calculation took {time.time() - current_time:.2f} seconds')
+        with timed("assembly.find_cell_neighbours"):
+            _find_cell_neighbours(grid_cache, subdivide_rules, meta_level_info)
+        print(f'Cell neighbour calculation took {time.time() - current_time:.2f} seconds', flush=True)
 
         # Step 2: Calculate all cell edges
         current_time = time.time()
-        _calc_cell_edges(grid_cache, meta_level_info, edge_index_cache, edge_index_dict, edge_adj_cell_indices)
-        print(f'Cell edge calculation took {time.time() - current_time:.2f} seconds')
+        with timed("assembly.calc_cell_edges"):
+            _calc_cell_edges(grid_cache, meta_level_info, edge_index_cache, edge_index_dict, edge_adj_cell_indices)
+        print(f'Cell edge calculation took {time.time() - current_time:.2f} seconds', flush=True)
         
-        print(f'Find cells: {len(grid_cache)}')
-        print(f'Find cell edges: {len(edge_index_cache)}')
+        print(f'Find cells: {len(grid_cache)}', flush=True)
+        print(f'Find cell edges: {len(edge_index_cache)}', flush=True)
         
         # Step 3: Record grid topology ########################################################
-        
+
         # Create cell topology records
         cell_record_path = workspace / 'cell_topo.bin'
-        _record_cell_topology(
-            grid_cache,
-            meta_bounds,
-            meta_level_info,
-            grid_info,
-            str(cell_record_path),
-            dem_path=dem_path,
-            lum_path=lum_path,
-            src_crs=f"EPSG:{epsg}"
-        )
-        
+        with timed("assembly.record_cell_topology", n_cells=len(grid_cache)):
+            _record_cell_topology(
+                grid_cache,
+                meta_bounds,
+                meta_level_info,
+                grid_info,
+                str(cell_record_path),
+                dem_path=dem_path,
+                lum_path=lum_path,
+                src_crs=f"EPSG:{epsg}"
+            )
+
         # Create edge topology records
         edge_record_path = workspace / 'edge_topo.bin'
-        _record_edge_topology(
-            edge_index_cache,
-            edge_adj_cell_indices,
-            meta_bounds,
-            str(edge_record_path),
-            dem_path=dem_path,
-            lum_path=lum_path,
-            src_crs=f"EPSG:{epsg}"
-        )
+        with timed("assembly.record_edge_topology", n_edges=len(edge_index_cache)):
+            _record_edge_topology(
+                edge_index_cache,
+                edge_adj_cell_indices,
+                meta_bounds,
+                str(edge_record_path),
+                dem_path=dem_path,
+                lum_path=lum_path,
+                src_crs=f"EPSG:{epsg}"
+            )
         
         # Create meta json
         meta_info = {

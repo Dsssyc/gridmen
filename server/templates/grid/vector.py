@@ -7,17 +7,22 @@ import logging
 import functools
 import numpy as np
 
-from typing import List
+from typing import List, Any
 from pathlib import Path
 from pyproj import Transformer
 from typing import Dict, Tuple
 from dataclasses import dataclass
+
+from ._timing import timed, timing_logger
 
 # --- 针对vector的处理算法 ---
 logger = logging.getLogger(__name__)
 
 # 全局缓存的坐标转换器
 _transformer_cache: Dict[Tuple[str, str], Transformer] = {}
+
+# 默认 LineString 缓冲区距离（保留与原实现 fallback 一致的语义）
+_DEFAULT_LINE_BUFFER = 50.0
 
 @dataclass
 class NeData:
@@ -81,7 +86,7 @@ def write_ne(ne_path: str, ne_data: NeData) -> None:
             row_parts.append(f"{ne_data.ze_list[i]:.14g}")
             row_parts.append(f"{ne_data.under_suf_list[i]}")
             
-            f.write(' '.join(row_parts) + '\n')
+            f.write(', '.join(row_parts) + '\n')
 
 def write_ns(ns_path: str, ns_data: NsData) -> None:
     """
@@ -108,7 +113,7 @@ def write_ns(ns_path: str, ns_data: NsData) -> None:
             row_parts.append(f"{ns_data.z_side_list[i]:.14g}")
             row_parts.append(f"{ns_data.s_type_list[i]}")
             
-            f.write(' '.join(row_parts) + '\n')
+            f.write(', '.join(row_parts) + '\n')
 
 def get_ne(ne_path: str) -> "NeData":
     # 初始化列表（含占位符 0）
@@ -997,22 +1002,314 @@ def _get_crs_from_schema_node_key(schema_node_key: str) -> str:
     except Exception as e:
         logger.error(f"Failed to read schema.json file: {e}")
         return "EPSG:2326"  # Default to 2326
+# ==================== 向量化几何工具（性能优化） ====================
+
+def _ring_to_array(ring: list) -> np.ndarray | None:
+    """Convert a single ring (list of [x, y, ...]) to a (V, 2) float64 ndarray.
+
+    Drops a duplicated closing vertex so that ray-casting iterates V edges via
+    pairing each vertex with the previous one.
+    """
+    if not ring or len(ring) < 3:
+        return None
+    arr = np.asarray(ring, dtype=np.float64)
+    if arr.ndim != 2 or arr.shape[1] < 2:
+        return None
+    arr = arr[:, :2]
+    # 去除尾部闭合点（如果存在）
+    if arr.shape[0] >= 2 and np.array_equal(arr[0], arr[-1]):
+        arr = arr[:-1]
+    if arr.shape[0] < 3:
+        return None
+    return arr
+
+
+def _polygon_to_arrays(coordinates: list) -> tuple[np.ndarray, list[np.ndarray]] | None:
+    """Convert GeoJSON Polygon coordinates to (exterior, [holes...]) ndarrays."""
+    if not coordinates:
+        return None
+    exterior = _ring_to_array(coordinates[0])
+    if exterior is None:
+        return None
+    holes: list[np.ndarray] = []
+    for i in range(1, len(coordinates)):
+        h = _ring_to_array(coordinates[i])
+        if h is not None:
+            holes.append(h)
+    return exterior, holes
+
+
+def _extract_polygons(feature_json: dict) -> list[tuple[np.ndarray, list[np.ndarray], tuple[float, float, float, float]]]:
+    """Walk a Feature/FeatureCollection and return a list of polygons.
+
+    Each polygon is (exterior_ndarray, [hole_ndarray, ...], bbox).
+    """
+    out: list[tuple[np.ndarray, list[np.ndarray], tuple[float, float, float, float]]] = []
+    if not feature_json:
+        return out
+
+    if feature_json.get('type') == 'FeatureCollection':
+        for f in feature_json.get('features', []) or []:
+            out.extend(_extract_polygons(f))
+        return out
+
+    geometry = feature_json.get('geometry') if 'geometry' in feature_json else feature_json
+    if not geometry:
+        return out
+    geom_type = (geometry.get('type') or '').lower()
+    coords = geometry.get('coordinates') or []
+
+    if geom_type == 'polygon':
+        poly = _polygon_to_arrays(coords)
+        if poly is not None:
+            ext, holes = poly
+            bbox = (float(ext[:, 0].min()), float(ext[:, 1].min()),
+                    float(ext[:, 0].max()), float(ext[:, 1].max()))
+            out.append((ext, holes, bbox))
+    elif geom_type == 'multipolygon':
+        for poly_coords in coords:
+            poly = _polygon_to_arrays(poly_coords)
+            if poly is not None:
+                ext, holes = poly
+                bbox = (float(ext[:, 0].min()), float(ext[:, 1].min()),
+                        float(ext[:, 0].max()), float(ext[:, 1].max()))
+                out.append((ext, holes, bbox))
+    return out
+
+
+def _extract_linestrings(feature_json: dict) -> list[np.ndarray]:
+    """Walk a Feature/FeatureCollection and return a list of LineString segments arrays.
+
+    Note: the original ``is_point_intersects_with_feature`` only handles
+    geometry type ``linestring`` (not multilinestring), so we mirror that.
+    """
+    out: list[np.ndarray] = []
+    if not feature_json:
+        return out
+
+    if feature_json.get('type') == 'FeatureCollection':
+        for f in feature_json.get('features', []) or []:
+            out.extend(_extract_linestrings(f))
+        return out
+
+    geometry = feature_json.get('geometry') if 'geometry' in feature_json else feature_json
+    if not geometry:
+        return out
+    geom_type = (geometry.get('type') or '').lower()
+    coords = geometry.get('coordinates') or []
+    if geom_type == 'linestring' and len(coords) >= 2:
+        arr = np.asarray(coords, dtype=np.float64)
+        if arr.ndim == 2 and arr.shape[1] >= 2 and arr.shape[0] >= 2:
+            out.append(arr[:, :2])
+    return out
+
+
+def _extract_points(feature_json: dict) -> list[tuple[float, float]]:
+    """Walk a Feature/FeatureCollection and return Point coordinates."""
+    out: list[tuple[float, float]] = []
+    if not feature_json:
+        return out
+    if feature_json.get('type') == 'FeatureCollection':
+        for f in feature_json.get('features', []) or []:
+            out.extend(_extract_points(f))
+        return out
+    geometry = feature_json.get('geometry') if 'geometry' in feature_json else feature_json
+    if not geometry:
+        return out
+    geom_type = (geometry.get('type') or '').lower()
+    coords = geometry.get('coordinates') or []
+    if geom_type == 'point' and len(coords) >= 2:
+        out.append((float(coords[0]), float(coords[1])))
+    return out
+
+
+def _ring_contains_vectorized(xs: np.ndarray, ys: np.ndarray, ring: np.ndarray) -> np.ndarray:
+    """Vectorized ray-casting point-in-ring for many points and one ring.
+
+    Mirrors the semantics of ``is_point_in_polygon`` (closed half-edges,
+    ``y > min`` / ``y <= max`` / ``x <= max``) so results match the original
+    scalar implementation as closely as possible.
+
+    Args:
+        xs, ys: 1D float64 arrays of point coordinates.
+        ring: (V, 2) float64 ndarray (no duplicated closing vertex).
+    Returns:
+        Boolean ndarray of shape (xs.shape[0],).
+    """
+    n = ring.shape[0]
+    inside = np.zeros(xs.shape[0], dtype=bool)
+    if n < 3:
+        return inside
+
+    # Pair each vertex i with previous j (j == i - 1, wrapping).
+    p1x = ring[-1, 0]
+    p1y = ring[-1, 1]
+    for i in range(n):
+        p2x = ring[i, 0]
+        p2y = ring[i, 1]
+        miny = p1y if p1y < p2y else p2y
+        maxy = p1y if p1y > p2y else p2y
+        maxx = p1x if p1x > p2x else p2x
+
+        cond = (ys > miny) & (ys <= maxy) & (xs <= maxx)
+        if np.any(cond):
+            if p1y != p2y:
+                # Avoid div-by-zero for horizontal edges (filtered by miny<maxy above).
+                xinters = (ys - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                if p1x == p2x:
+                    flip = cond
+                else:
+                    flip = cond & (xs <= xinters)
+                inside ^= flip
+        p1x, p1y = p2x, p2y
+    return inside
+
+
+def _polygons_mask(xs: np.ndarray, ys: np.ndarray,
+                   polygons: list[tuple[np.ndarray, list[np.ndarray], tuple[float, float, float, float]]]) -> np.ndarray:
+    """Boolean mask of points that lie inside any polygon (with hole exclusion per polygon)."""
+    if xs.size == 0 or not polygons:
+        return np.zeros(xs.shape[0], dtype=bool)
+
+    total = np.zeros(xs.shape[0], dtype=bool)
+    for exterior, holes, bbox in polygons:
+        # Bounding-box prefilter to skip the ring math for far-away points.
+        in_bbox = (xs >= bbox[0]) & (xs <= bbox[2]) & (ys >= bbox[1]) & (ys <= bbox[3])
+        # Skip points already covered by an earlier polygon.
+        candidates = in_bbox & (~total)
+        if not np.any(candidates):
+            continue
+        idx = np.flatnonzero(candidates)
+        cx = xs[idx]
+        cy = ys[idx]
+        in_ext = _ring_contains_vectorized(cx, cy, exterior)
+        if not np.any(in_ext):
+            continue
+        # Holes only exclude points that are inside this polygon's exterior.
+        if holes:
+            for hole in holes:
+                if not np.any(in_ext):
+                    break
+                in_hole = _ring_contains_vectorized(cx, cy, hole)
+                in_ext &= ~in_hole
+        if np.any(in_ext):
+            total[idx[in_ext]] = True
+    return total
+
+
+def _lines_mask(xs: np.ndarray, ys: np.ndarray,
+                lines: list[np.ndarray], buffer_distance: float = _DEFAULT_LINE_BUFFER) -> np.ndarray:
+    """Boolean mask of points whose distance to any LineString segment is <= buffer."""
+    if xs.size == 0 or not lines:
+        return np.zeros(xs.shape[0], dtype=bool)
+
+    out = np.zeros(xs.shape[0], dtype=bool)
+    buf2 = float(buffer_distance) * float(buffer_distance)
+    for line in lines:
+        # Per-segment iteration with bbox prefilter.
+        for i in range(line.shape[0] - 1):
+            x1, y1 = line[i, 0], line[i, 1]
+            x2, y2 = line[i + 1, 0], line[i + 1, 1]
+            seg_minx = (x1 if x1 < x2 else x2) - buffer_distance
+            seg_maxx = (x1 if x1 > x2 else x2) + buffer_distance
+            seg_miny = (y1 if y1 < y2 else y2) - buffer_distance
+            seg_maxy = (y1 if y1 > y2 else y2) + buffer_distance
+
+            cand = (~out) & (xs >= seg_minx) & (xs <= seg_maxx) & (ys >= seg_miny) & (ys <= seg_maxy)
+            if not np.any(cand):
+                continue
+            idx = np.flatnonzero(cand)
+            px = xs[idx]
+            py = ys[idx]
+            dx = x2 - x1
+            dy = y2 - y1
+            seg_len2 = dx * dx + dy * dy
+            if seg_len2 == 0.0:
+                d2 = (px - x1) ** 2 + (py - y1) ** 2
+            else:
+                t = ((px - x1) * dx + (py - y1) * dy) / seg_len2
+                np.clip(t, 0.0, 1.0, out=t)
+                projx = x1 + t * dx
+                projy = y1 + t * dy
+                d2 = (px - projx) ** 2 + (py - projy) ** 2
+            hit = d2 <= buf2
+            if np.any(hit):
+                out[idx[hit]] = True
+    return out
+
+
+def _points_mask(xs: np.ndarray, ys: np.ndarray, points: list[tuple[float, float]]) -> np.ndarray:
+    """Boolean mask of grid points that exactly match (within 1e-9) any feature Point."""
+    if xs.size == 0 or not points:
+        return np.zeros(xs.shape[0], dtype=bool)
+    out = np.zeros(xs.shape[0], dtype=bool)
+    for px, py in points:
+        out |= (np.abs(xs - px) < 1e-9) & (np.abs(ys - py) < 1e-9)
+    return out
+
+
+def _compute_feature_mask(xs: np.ndarray, ys: np.ndarray, feature_json: dict,
+                          buffer_distance: float = _DEFAULT_LINE_BUFFER) -> np.ndarray:
+    """Compute a boolean mask: which (xs[i], ys[i]) points intersect ``feature_json``."""
+    if xs.size == 0 or not feature_json:
+        return np.zeros(xs.shape[0], dtype=bool)
+
+    polygons = _extract_polygons(feature_json)
+    lines = _extract_linestrings(feature_json)
+    points = _extract_points(feature_json)
+
+    mask = np.zeros(xs.shape[0], dtype=bool)
+    if polygons:
+        with timed("vector.mask.polygons", n_polys=len(polygons), n_pts=int(xs.size)):
+            mask |= _polygons_mask(xs, ys, polygons)
+    if lines:
+        with timed("vector.mask.lines", n_lines=len(lines), n_pts=int(xs.size), buf=buffer_distance):
+            mask |= _lines_mask(xs, ys, lines, buffer_distance)
+    if points:
+        with timed("vector.mask.points", n_points=len(points), n_pts=int(xs.size)):
+            mask |= _points_mask(xs, ys, points)
+    return mask
+
+
+# 缓存 (node_key, target_crs) -> 已转换好的 feature_json
+_feature_cache: Dict[Tuple[str, str], dict] = {}
+
+
+def _load_transformed_feature(node_key: str, from_crs: str, to_crs: str) -> dict:
+    """Load a vector feature and transform it to ``to_crs``, with memoization."""
+    cache_key = (node_key or "", to_crs or "")
+    if cache_key in _feature_cache:
+        return _feature_cache[cache_key]
+    with timed("vector.load_feature", node_key=node_key):
+        feature = _get_feature_from_node(node_key)
+    with timed("vector.transform_feature", from_crs=from_crs, to_crs=to_crs):
+        feature_json = transform_feature(feature, from_crs, to_crs)
+    _feature_cache[cache_key] = feature_json
+    return feature_json
+
+
+def clear_vector_caches() -> None:
+    """Reset feature/transformer caches (useful for tests / long-running processes)."""
+    _feature_cache.clear()
+
+
 # ==================== 操作应用类函数 ====================
 
 def apply_vector_modification(params: dict, model_data: dict) -> dict:
     """
-    应用添加围堰操作到模型数据（基于vector参数）
-    
-    Args:
-        vector_params: 矢量参数，包含DEM和LUM信息
-        model_data: 模型数据字典，包含ne和ns数据
-        
-    Returns:
-        dict: 更新后的模型数据
+    应用添加围堰操作到模型数据（基于vector参数）。
+
+    向量化实现：每个 vector 条目只对网格中心 / 边中心计算一次相交 mask，
+    然后通过 numpy 索引一次性应用所有 DEM / LUM 调整。
+
+    保留与原实现一致的语义：
+      - DEM 的 add / set / subtract / max / 默认（加法）
+      - NS 的 DEM 始终以 ``+= dem_value`` 方式叠加（与原实现一致）
+      - LineString 使用固定 50.0 缓冲距离（原实现 fallback 行为）
+      - 索引 0 为占位符，跳过不修改
     """
-    
     logger.info("开始应用基围（基于vector参数）")
-    
+
     vector_list = params.get('vector', [])
     assembly_params = params.get('assembly', {})
 
@@ -1020,126 +1317,124 @@ def apply_vector_modification(params: dict, model_data: dict) -> dict:
         logger.warning("vector参数不是一个列表，尝试将其包装为列表")
         vector_list = [vector_list]
 
-    ne_data: NeData = model_data.get('ne', {})
-    ns_data: NsData = model_data.get('ns', {})
+    ne_data: NeData = model_data.get('ne')
+    ns_data: NsData = model_data.get('ns')
+    if ne_data is None or ns_data is None:
+        logger.warning("ne_data 或 ns_data 缺失，跳过 vector 修改")
+        return model_data
 
-    for vector_params in vector_list:
+    # ---- 一次性把列表转成 numpy 数组（跳过占位符 index 0）----
+    with timed("vector.prepare_arrays",
+               n_ne=len(ne_data.xe_list) - 1, n_ns=len(ns_data.x_side_list) - 1):
+        ne_xe = np.asarray(ne_data.xe_list[1:], dtype=np.float64)
+        ne_ye = np.asarray(ne_data.ye_list[1:], dtype=np.float64)
+        ne_ze = np.asarray(ne_data.ze_list[1:], dtype=np.float64)
+        ne_us = np.asarray(ne_data.under_suf_list[1:], dtype=np.int64)
+
+        ns_xs = np.asarray(ns_data.x_side_list[1:], dtype=np.float64)
+        ns_ys = np.asarray(ns_data.y_side_list[1:], dtype=np.float64)
+        ns_zs = np.asarray(ns_data.z_side_list[1:], dtype=np.float64)
+        # s_type 在原实现中通过 float() 解析后又作为 int 使用，这里保留 float 以避免破坏旧文件，
+        # 但 set 操作时按 int 写回。
+        ns_st = np.asarray(ns_data.s_type_list[1:], dtype=np.float64)
+
+    schema_node_key = assembly_params.get('schema_node_key')
+    to_crs = _get_crs_from_schema_node_key(schema_node_key)
+
+    for vec_idx, vector_params in enumerate(vector_list):
         if not isinstance(vector_params, dict):
             logger.warning(f"跳过非字典类型的vector参数: {vector_params}")
             continue
 
-        # 从vector参数中提取DEM和LUM信息
-        dem_params = vector_params.get('dem', {})
-        lum_params = vector_params.get('lum', {})
-        
+        dem_params = vector_params.get('dem') or {}
+        lum_params = vector_params.get('lum') or {}
+
         dem_type = dem_params.get('type')
         dem_value = dem_params.get('value')
         lum_type = lum_params.get('type')
         lum_value = lum_params.get('value')
 
         node_key = vector_params.get('node_key')
-        schema_node_key = assembly_params.get('schema_node_key')
-        feature = _get_feature_from_node(node_key)
-
         from_crs = _get_crs_from_node_key(node_key)
-        to_crs = _get_crs_from_schema_node_key(schema_node_key)
-        feature_json = transform_feature(feature, from_crs, to_crs)
 
+        with timed("vector.entry", idx=vec_idx, node_key=node_key,
+                   dem_type=dem_type, lum_type=lum_type):
+            feature_json = _load_transformed_feature(node_key, from_crs, to_crs)
+            if not feature_json:
+                logger.warning(f"vector entry {vec_idx} 没有有效 feature, 跳过")
+                continue
 
-        
-        if dem_type is not None and dem_value is not None:
-            if dem_type == 'add':  # 加法
-                for index in range(len(ne_data.xe_list)):
-                    x = ne_data.xe_list[index]
-                    y = ne_data.ye_list[index]
-                    
-                    # 判断当前网格点是否与feature相交
-                    if is_point_intersects_with_feature(x, y, feature_json):
-                        ne_data.ze_list[index] += dem_value
-                        # logger.info(f"网格中心点 ({x}, {y}) 应用了加法DEM修改: +{dem_value}")
-            
-            elif dem_type == 'set':  # 设置指定高程
-                for index in range(len(ne_data.xe_list)):
-                    x = ne_data.xe_list[index]
-                    y = ne_data.ye_list[index]
-                    
-                    if is_point_intersects_with_feature(x, y, feature_json):
-                        ne_data.ze_list[index] = dem_value
-                        # logger.info(f"网格中心点 ({x}, {y}) 应用了绝对值DEM修改: {dem_value}")
-            
-            elif dem_type == 'subtract':  # 减法
-                for index in range(len(ne_data.xe_list)):
-                    x = ne_data.xe_list[index]
-                    y = ne_data.ye_list[index]
-                    
-                    if is_point_intersects_with_feature(x, y, feature_json):
-                        ne_data.ze_list[index] -= dem_value
-                        # logger.info(f"网格中心点 ({x}, {y}) 应用了减法DEM修改: -{dem_value}")
+            # ---- 计算两套 mask（NE 中心点 + NS 边中心点）----
+            need_ne_mask = (
+                (dem_type is not None and (dem_value is not None or dem_type == 'max'))
+                or (lum_type == 'set' and lum_value is not None)
+            )
+            need_ns_mask = (
+                (dem_type is not None and dem_value is not None)
+                or (lum_type is not None and lum_value is not None)
+            )
 
-            
-            else:  # 默认情况 - 加法模式
-                for index in range(len(ne_data.xe_list)):
-                    x = ne_data.xe_list[index]
-                    y = ne_data.ye_list[index]
-                    
-                    # 判断当前网格点是否与feature相交
-                    if is_point_intersects_with_feature(x, y, feature_json):
-                        ne_data.ze_list[index] += dem_value if dem_value is not None else 0
-                        # logger.info(f"网格中心点 ({x}, {y}) 应用了默认DEM修改: +{dem_value or 0}")
+            ne_mask: np.ndarray | None = None
+            ns_mask: np.ndarray | None = None
+            if need_ne_mask:
+                with timed("vector.ne_mask", n_pts=int(ne_xe.size)):
+                    ne_mask = _compute_feature_mask(ne_xe, ne_ye, feature_json)
+                    timing_logger.debug(
+                        "vector.ne_mask hits=%d/%d", int(ne_mask.sum()), int(ne_mask.size)
+                    )
+            if need_ns_mask:
+                with timed("vector.ns_mask", n_pts=int(ns_xs.size)):
+                    ns_mask = _compute_feature_mask(ns_xs, ns_ys, feature_json)
+                    timing_logger.debug(
+                        "vector.ns_mask hits=%d/%d", int(ns_mask.sum()), int(ns_mask.size)
+                    )
 
-        if dem_type is not None and dem_type == 'max':  # 设置为最大高程值
-                # 首先找到vector范围内的最大DEM值
-                max_dem_value = float('-inf')
-                for index in range(len(ne_data.xe_list)):
-                    x = ne_data.xe_list[index]
-                    y = ne_data.ye_list[index]
-                    
-                    if is_point_intersects_with_feature(x, y, feature_json):
-                        if ne_data.ze_list[index] > max_dem_value:
-                            max_dem_value = ne_data.ze_list[index]
-                
-                # 如果找到了有效的最大值，则将vector范围内的所有值设置为该最大值
-                if max_dem_value != float('-inf'):
-                    for index in range(len(ne_data.xe_list)):
-                        x = ne_data.xe_list[index]
-                        y = ne_data.ye_list[index]
-                        
-                        if is_point_intersects_with_feature(x, y, feature_json):
-                            ne_data.ze_list[index] = max_dem_value
-        
-        # 根据LUM参数修改土地利用类型
-        if lum_type == 'set' and lum_value is not None:
-            for index in range(len(ne_data.xe_list)):
-                x = ne_data.xe_list[index]
-                y = ne_data.ye_list[index]
-                
-                # 判断当前网格点是否与feature相交
-                if is_point_intersects_with_feature(x, y, feature_json):
-                    ne_data.under_suf_list[index] = lum_value
-                    # logger.info(f"网格中心点 ({x}, {y}) 应用了LUM修改: {lum_value}")
-        
-        # 对ns数据也做相应处理
-        if dem_type is not None and dem_value is not None:
-            for index in range(len(ns_data.x_side_list)):
-                x = ns_data.x_side_list[index]
-                y = ns_data.y_side_list[index]
+            # ---- 应用 NE DEM ----
+            if ne_mask is not None and dem_type is not None:
+                with timed("vector.apply_ne_dem", dem_type=dem_type):
+                    if dem_type == 'add' and dem_value is not None:
+                        ne_ze[ne_mask] += float(dem_value)
+                    elif dem_type == 'set' and dem_value is not None:
+                        ne_ze[ne_mask] = float(dem_value)
+                    elif dem_type == 'subtract' and dem_value is not None:
+                        ne_ze[ne_mask] -= float(dem_value)
+                    elif dem_type == 'max':
+                        if np.any(ne_mask):
+                            max_val = float(ne_ze[ne_mask].max())
+                            ne_ze[ne_mask] = max_val
+                    elif dem_value is not None:
+                        # 默认 -- 加法（与原实现兜底分支保持一致）
+                        ne_ze[ne_mask] += float(dem_value)
 
-                # 判断当前网格点是否与feature相交
-                if is_point_intersects_with_feature(x, y, feature_json):
-                    ns_data.z_side_list[index] += dem_value if dem_value is not None else 0
-                    # logger.info(f"边中心点 ({x}, {y}) 应用了DEM修改: +{dem_value or 0}")
+            # ---- 应用 NE LUM ----
+            if ne_mask is not None and lum_type == 'set' and lum_value is not None:
+                with timed("vector.apply_ne_lum"):
+                    ne_us[ne_mask] = int(lum_value)
 
-        if lum_type is not None and lum_value is not None:
-            for index in range(len(ns_data.x_side_list)):
-                x = ns_data.x_side_list[index]
-                y = ns_data.y_side_list[index]
+            # ---- 应用 NS DEM (保留原语义：始终 += dem_value) ----
+            if ns_mask is not None and dem_type is not None and dem_value is not None:
+                with timed("vector.apply_ns_dem"):
+                    ns_zs[ns_mask] += float(dem_value)
 
-                # 判断当前网格点是否与feature相交
-                if is_point_intersects_with_feature(x, y, feature_json):
-                    ns_data.s_type_list[index] = lum_value
-                    # logger.info(f"边中心点 ({x}, {y}) 应用了LUM修改: {lum_value}")
+            # ---- 应用 NS LUM ----
+            if ns_mask is not None and lum_type is not None and lum_value is not None:
+                with timed("vector.apply_ns_lum"):
+                    ns_st[ns_mask] = float(lum_value)
+
+    # ---- 写回 list（保留占位符 index 0） ----
+    with timed("vector.write_back_arrays"):
+        ne_data.ze_list[1:] = ne_ze.tolist()
+        ne_data.xe_list[1:] = ne_xe.tolist()  # 不修改但保持类型一致
+        ne_data.ye_list[1:] = ne_ye.tolist()
+        ne_data.under_suf_list[1:] = [int(v) for v in ne_us.tolist()]
+
+        ns_data.z_side_list[1:] = ns_zs.tolist()
+        ns_data.x_side_list[1:] = ns_xs.tolist()
+        ns_data.y_side_list[1:] = ns_ys.tolist()
+        # s_type_list 在原实现中混用 int/float，写回时保持为 float（write_ns 用 %d 格式可能依赖 int，
+        # 但原代码亦未严格保证），统一转 int 以匹配写出的整型语义。
+        ns_data.s_type_list[1:] = [int(v) for v in ns_st.tolist()]
 
     model_data['ne'] = ne_data
     model_data['ns'] = ns_data
-    
     return model_data

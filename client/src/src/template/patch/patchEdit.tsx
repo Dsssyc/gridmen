@@ -44,10 +44,10 @@ import { MapViewContext } from '@/views/mapView/mapView'
 import { boundingBox2D } from '@/core/util/boundingBox2D'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import TopologyLayer from '@/views/mapView/topology/TopologyLayer'
-import CustomLayerGroup from '@/views/mapView/topology/customLayerGroup'
-import { convertBoundsCoordinates, waitForCustomLayerGroup, waitForDrawInstanceLoad, waitForMapLoad } from '@/utils/utils'
+import { convertBoundsCoordinates, waitForDrawInstanceLoad, waitForMapLoad } from '@/utils/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { ensureTopologyLayerInitialized, getOrCreateTopologyLayer } from '@/views/mapView/topology/topologyLayerManager'
+import { ensureTopologyLayerInitialized, getOrCreatePerPatchTopology } from '@/views/mapView/topology/topologyLayerManager'
+import { layerOrderCoordinator } from '@/views/mapView/layerOrderCoordinator'
 
 interface PatchEditProps {
     node: IResourceNode
@@ -67,6 +67,7 @@ interface PageContext {
     vectorData: Record<string, any> | null
     selectedVectorFeatureIds: Set<string>
     featuePickResource: FeaturePickResource | null
+    perPatchCLGId: string | null
 }
 
 interface GridCheckingInfo {
@@ -144,6 +145,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         vectorData: null,
         selectedVectorFeatureIds: new Set<string>(),
         featuePickResource: null,
+        perPatchCLGId: null,
     })
 
     const gridInfo = useRef<GridCheckingInfo | null>(null)
@@ -190,8 +192,6 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             pageContext.current.patch = (node as ResourceNode).mountParams
         }
 
-        const clg = await waitForCustomLayerGroup()
-
         const gridContext: PatchContext = {
             nodeInfo: node.nodeInfo,
             lockId: (node as ResourceNode).lockId!,
@@ -201,7 +201,11 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             rules: pageContext.current.patch!.subdivide_rules
         }
 
-        const gridLayer = getOrCreateTopologyLayer(clg, map, topologyLayerId)
+        const { clgId, topologyLayer: gridLayer } = getOrCreatePerPatchTopology(
+            map, node.nodeInfo, topologyLayerId,
+        )
+        pageContext.current.perPatchCLGId = clgId
+        layerOrderCoordinator.register(node.nodeInfo, [clgId])
 
         const patchCore: PatchCore = new PatchCore(gridContext)
         await ensureTopologyLayerInitialized(gridLayer, map)
@@ -229,8 +233,9 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             __cleanup: {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
                 topology: () => {
-                    const clg = store.get<CustomLayerGroup>('clg')
-                    clg?.removeLayer(topologyLayerId)
+                    const id = pageContext.current.perPatchCLGId
+                    if (id && map.getLayer(id)) map.removeLayer(id)
+                    pageContext.current.perPatchCLGId = null
 
                     const featureIds = Array.from(pageContext.current.selectedVectorFeatureIds!)
                     drawInstance.delete(featureIds)
@@ -238,6 +243,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
                     pageContext.current.topologyLayer = null
                     pageContext.current.patchCore = null
+                    layerOrderCoordinator.unregister(node.nodeInfo)
                 },
             },
         }
@@ -257,11 +263,13 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             __cleanup: {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
                 topology: () => {
-                    const clg = store.get<CustomLayerGroup>('clg')
-                    clg?.removeLayer(topologyLayerId)
+                    const id = pageContext.current.perPatchCLGId
+                    if (id && map.getLayer(id)) map.removeLayer(id)
+                    pageContext.current.perPatchCLGId = null
 
                     pageContext.current.topologyLayer = null
                     pageContext.current.patchCore = null
+                    layerOrderCoordinator.unregister(node.nodeInfo)
                 },
             },
         }

@@ -9,6 +9,7 @@ from pynoodle import noodle
 from .assembly import assembly
 from crms.grid import HydroElements, HydroSides, BlockGenerator
 from .vector import write_ns, write_ne, apply_vector_modification, get_ne, get_ns
+from ._timing import timed, timing_logger
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,20 @@ def MOUNT(node_key: str, params: dict | None = None):
     if not params:
         _create_default_meta_if_not_exists(resource_dir)
         return
-    
-    # Handle assembly if present
-    if 'assembly' in params:
-        _handle_assembly(assembly_params, node_key, resource_dir)
-    
-    # Handle vector if present
-    if 'vector' in params and params['vector']:
-        _handle_vector_modification(params, resource_dir)
+
+    with timed("MOUNT", node_key=node_key,
+               has_assembly='assembly' in params,
+               has_vector=bool(params.get('vector'))):
+        # Handle assembly if present
+        if 'assembly' in params:
+            with timed("MOUNT.assembly", node_key=node_key):
+                _handle_assembly(assembly_params, node_key, resource_dir)
+
+        # Handle vector if present
+        if 'vector' in params and params['vector']:
+            with timed("MOUNT.vector", node_key=node_key,
+                       n_entries=len(params['vector']) if isinstance(params['vector'], list) else 1):
+                _handle_vector_modification(params, resource_dir)
 
 
 # ===== Grid Mount Handlers =====
@@ -59,16 +66,20 @@ def _handle_assembly(assembly_params: dict, node_key: str, resource_dir: Path):
 
     print(f"Starting assembly for grid: {node_key}")
     try:
-        meta_info = assembly(resource_dir, schema_node_key, patch_node_keys, grading_threshold, dem_path, lum_path)
-        ne = HydroElements(str(resource_dir / 'cell_topo.bin'))
-        ns = HydroSides(str(resource_dir / 'edge_topo.bin'))
-        ne.export_ne(str(resource_dir / 'ne.txt'))
-        ns.export_ns(str(resource_dir / 'ns.txt'))
+        with timed("assembly.compile", node_key=node_key):
+            meta_info = assembly(resource_dir, schema_node_key, patch_node_keys, grading_threshold, dem_path, lum_path)
+        with timed("assembly.load_topology"):
+            ne = HydroElements(str(resource_dir / 'cell_topo.bin'))
+            ns = HydroSides(str(resource_dir / 'edge_topo.bin'))
+        with timed("assembly.export_ne_ns_text", n_ne=len(ne.es), n_ns=len(ns.ss)):
+            ne.export_ne(str(resource_dir / 'ne.txt'))
+            ns.export_ns(str(resource_dir / 'ns.txt'))
 
         print(f"Total elements loaded for block generation: {len(ne.es)}")
         blocks_output_dir = resource_dir / 'blocks'
-        generator = BlockGenerator(output_dir=str(blocks_output_dir), base_name=node_key)
-        generator.process(ne.es)
+        with timed("assembly.block_generation", n_elements=len(ne.es)):
+            generator = BlockGenerator(output_dir=str(blocks_output_dir), base_name=node_key)
+            generator.process(ne.es)
 
         with open(meta_path, 'w', encoding='utf-8') as f:
             json.dump(meta_info, f, indent=4)
@@ -88,27 +99,31 @@ def _handle_vector_modification(params: dict, resource_dir: Path):
     
     try:
         # Load the existing data
-        ne_data = get_ne(ne_path)
-
-        ns_data = get_ns(ns_path)
+        with timed("vector.read_ne", path=str(ne_path)):
+            ne_data = get_ne(ne_path)
+        with timed("vector.read_ns", path=str(ns_path)):
+            ns_data = get_ns(ns_path)
 
         # Prepare model data dictionary
         model_data = {
             'ne': ne_data,
             'ns': ns_data
         }
-        
+
         # Apply vector modifications
-        modified_model_data = apply_vector_modification(params, model_data)
+        with timed("vector.apply_modifications"):
+            modified_model_data = apply_vector_modification(params, model_data)
 
         # Extract modified data
         modified_ne_data = modified_model_data['ne']
         modified_ns_data = modified_model_data['ns']
-        
+
         # Write the modified data back to files
-        write_ne(ne_path, modified_ne_data)
-        write_ns(ns_path, modified_ns_data)
-        
+        with timed("vector.write_ne", path=str(ne_path)):
+            write_ne(ne_path, modified_ne_data)
+        with timed("vector.write_ns", path=str(ns_path)):
+            write_ns(ns_path, modified_ns_data)
+
         logger.info(f"Successfully applied vector modifications and updated NE and NS files.")
     except Exception as e:
         logger.error(f"Error during vector modification: {e}")

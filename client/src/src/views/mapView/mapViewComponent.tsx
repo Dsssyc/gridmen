@@ -9,12 +9,11 @@ import DrawRectangle from 'mapbox-gl-draw-rectangle-mode'
 import ToolPanel from './toolPanel'
 import LayerGroup from './layerGroup'
 import 'mapbox-gl/dist/mapbox-gl.css'
-import store from '@/store/store'
 import { useSettingStore } from '@/store/storeSet'
 import MapView, { MapViewContext } from './mapView'
 import { VIEW_REGISTRY } from '@/registry/viewRegistry'
 import { IResourceNode } from '@/template/scene/iscene'
-import CustomLayerGroup from './topology/customLayerGroup'
+import { layerOrderCoordinator } from './layerOrderCoordinator'
 import { calculateRectangleCoordinates, debounce } from '@/utils/utils'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 
@@ -141,10 +140,7 @@ const MapContainer = forwardRef<HTMLDivElement, MapContainerProps>(({ onMapLoad,
                 })
 
                 mapInstance.on('load', async () => {
-                    const layerGroup = new CustomLayerGroup()
-                    layerGroup.id = 'gridman-custom-layer-group'
-                    mapInstance.addLayer(layerGroup)
-                    store.set('clg', layerGroup)
+                    layerOrderCoordinator.setMap(mapInstance)
                 })
 
                 const drawColor = '#F06B00'

@@ -17,6 +17,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dot, Globe, Minus, MousePointer, Palette, Pencil, Redo2, SplinePointer, Square, Trash2, Undo2 } from 'lucide-react'
 import store from '@/store/store'
+import { addVectorDisplay, tagVectorColor, VectorDisplayHandle } from '@/views/mapView/vectorDisplayLayer'
+import { layerOrderCoordinator } from '@/views/mapView/layerOrderCoordinator'
 
 interface VectorCreationProps {
     node: IResourceNode
@@ -36,6 +38,7 @@ interface PageContext {
     }
     vectorFilePath: string | null
     createdVectorIds: Set<string>
+    displayHandle: VectorDisplayHandle | null
 }
 
 const vectorTips = [
@@ -64,6 +67,7 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
         },
         vectorFilePath: null,
         createdVectorIds: new Set<string>(),
+        displayHandle: null,
     })
 
     const [, triggerRepaint] = useReducer(x => x + 1, 0)
@@ -101,6 +105,14 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
         // await waitForMapLoad(map)
         await waitForDrawInstanceLoad(drawInstance)
 
+        if (!pageContext.current.displayHandle) {
+            const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
+            const handle = addVectorDisplay(map, node.nodeInfo, empty)
+            handle.setVisible(false)
+            pageContext.current.displayHandle = handle
+            layerOrderCoordinator.register(node.nodeInfo, handle.mapboxLayerIds)
+        }
+
         if (pageContext.current.hasVector) {
             (drawInstance as any).changeMode(getDrawInstanceModeByType(pageContext.current.pendingType))
             pageContext.current.drawingMode = "draw"
@@ -112,8 +124,24 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
                 vectorCreation: () => {
                     const featureIds = Array.from(pageContext.current.createdVectorIds)
+                    const handle = pageContext.current.displayHandle
+                    if (handle) {
+                        const fc: GeoJSON.FeatureCollection = {
+                            type: 'FeatureCollection',
+                            features: drawInstance.getAll().features.filter((f: any) =>
+                                f.properties?.session_id === node.nodeInfo
+                            ) as any,
+                        }
+                        const hex = getHexColorByValue(pageContext.current.vectorData?.color ?? 'sky-500')
+                        tagVectorColor(fc, hex)
+                        handle.setData(fc)
+                        handle.setVisible(true)
+                        handle.remove()
+                        pageContext.current.displayHandle = null
+                    }
                     drawInstance.delete(featureIds)
                     pageContext.current.createdVectorIds.clear()
+                    layerOrderCoordinator.unregister(node.nodeInfo)
                 }
             },
         }
@@ -131,8 +159,24 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
                 vectorCreation: () => {
                     const featureIds = Array.from(pageContext.current.createdVectorIds)
+                    const handle = pageContext.current.displayHandle
+                    if (handle) {
+                        const fc: GeoJSON.FeatureCollection = {
+                            type: 'FeatureCollection',
+                            features: drawInstance.getAll().features.filter((f: any) =>
+                                f.properties?.session_id === node.nodeInfo
+                            ) as any,
+                        }
+                        const hex = getHexColorByValue(pageContext.current.vectorData?.color ?? 'sky-500')
+                        tagVectorColor(fc, hex)
+                        handle.setData(fc)
+                        handle.setVisible(true)
+                        handle.remove()
+                        pageContext.current.displayHandle = null
+                    }
                     drawInstance.delete(featureIds)
                     pageContext.current.createdVectorIds.clear()
+                    layerOrderCoordinator.unregister(node.nodeInfo)
                 }
             },
         }
@@ -354,6 +398,16 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
 
             (drawInstance as any).changeMode('simple_select')
 
+            const fcSaved: GeoJSON.FeatureCollection = {
+                type: 'FeatureCollection',
+                features: drawInstance.getAll().features.filter((f: any) =>
+                    f.properties?.session_id === node.nodeInfo
+                ) as any,
+            }
+            const hexSaved = getHexColorByValue(pageContext.current.vectorData.color)
+            tagVectorColor(fcSaved, hexSaved)
+            pageContext.current.displayHandle?.setData(fcSaved)
+
             const featureIds = Array.from(pageContext.current.createdVectorIds)
             drawInstance.delete(featureIds)
             pageContext.current.createdVectorIds.clear()
@@ -518,7 +572,11 @@ export default function VectorCreation({ node, context }: VectorCreationProps) {
                                             for (const fid of pageContext.current.createdVectorIds) {
                                                 drawInstance.setFeatureProperty(fid, "color", hex)
                                             }
-                                            drawInstance.set(drawInstance.getAll())
+                                            try {
+                                                drawInstance.add(getNodeFeatures())
+                                            } catch (e) {
+                                                console.error("Failed to refresh draw features after color change:", e)
+                                            }
                                             triggerRepaint()
                                         }}
                                     >
