@@ -10,6 +10,7 @@ class LayerOrderCoordinator {
 
     setMap(map: mapboxgl.Map) {
         this.map = map
+        this.pendingApply = false
         if (this.unsubscribe) this.unsubscribe()
         this.unsubscribe = useLayerStore.subscribe(() => this.apply())
         this.apply()
@@ -31,8 +32,10 @@ class LayerOrderCoordinator {
         if (!map.isStyleLoaded()) {
             if (this.pendingApply) return
             this.pendingApply = true
+            const targetMap = map
             map.once('idle', () => {
                 this.pendingApply = false
+                if (this.map !== targetMap) return // map was swapped, drop stale callback
                 this.apply()
             })
             return
