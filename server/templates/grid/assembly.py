@@ -821,8 +821,50 @@ def _generate_cell_record(
             packed_record.extend(struct.pack('!B', value))
         elif value_type == 'd':  # double
             packed_record.extend(struct.pack('!d', value))
-
+    
     return packed_record
+
+def _generate_cell_record_from_geometry(
+    index,
+    min_xs,
+    min_ys,
+    max_xs,
+    max_ys,
+    edges,
+    altitude=-9999.0,
+    lum_type=0,
+) -> bytes:
+    west = [edge_index + 1 for edge_index in edges[EdgeCode.WEST]]
+    east = [edge_index + 1 for edge_index in edges[EdgeCode.EAST]]
+    south = [edge_index + 1 for edge_index in edges[EdgeCode.SOUTH]]
+    north = [edge_index + 1 for edge_index in edges[EdgeCode.NORTH]]
+    b_field_names = ['lum_type', 'west_edge_count', 'east_edge_count', 'south_edge_count', 'north_edge_count']
+    b_field_values = [lum_type, len(west), len(east), len(south), len(north)]
+    for fname, fval in zip(b_field_names, b_field_values):
+        if not (0 <= fval <= 255):
+            raise ValueError(
+                f"Cell record uint8 overflow: {fname}={fval} (valid: 0-255). "
+                f"cell index={index + 1}, all B fields: {dict(zip(b_field_names, b_field_values))}"
+            )
+    fmt = "!" + "QdddddBBBBB" + ("Q" * (len(west) + len(east) + len(south) + len(north)))
+    return struct.pack(
+        fmt,
+        index + 1,
+        min_xs,
+        min_ys,
+        max_xs,
+        max_ys,
+        altitude,
+        lum_type,
+        len(west),
+        len(east),
+        len(south),
+        len(north),
+        *west,
+        *east,
+        *south,
+        *north,
+    )
 
 def _get_raster_value(src, x: float, y: float, src_crs: str = "EPSG:4326") -> float | None:
     try:
@@ -1007,6 +1049,32 @@ def _generate_edge_record(index: int, edge_data: bytes, edge_grids: list[int | N
         altitude,
         lum_type
     )
+
+def _generate_edge_record_from_geometry(
+    index,
+    direction,
+    x_min,
+    y_min,
+    x_max,
+    y_max,
+    edge_grids,
+    altitude=-9999.0,
+    lum_type=0,
+) -> bytes:
+    record = struct.pack(
+        "!QBddddQQdi",
+        index + 1,
+        direction,
+        x_min,
+        y_min,
+        x_max,
+        y_max,
+        edge_grids[0] + 1 if edge_grids[0] is not None else 0,
+        edge_grids[1] + 1 if edge_grids[1] is not None else 0,
+        altitude,
+        lum_type,
+    )
+    return record
 
 def _batch_edge_records_worker(args: tuple[list[bytes], list[list[int | None]]], bbox: list[float], dem_path: str = None, lum_path: str = None, src_crs: str = "EPSG:4326") -> bytes:
     edge_data, edge_cells, offset = args
