@@ -78,6 +78,26 @@ def test_generate_cell_record_from_precomputed_geometry_rejects_uint8_overflow()
         raise AssertionError("Expected ValueError for uint8 overflow")
 
 
+def test_batch_cell_records_worker_adds_level_and_global_id_to_overflow_errors(monkeypatch):
+    def fake_generate_cell_record_from_geometry(**kwargs):
+        raise ValueError("Cell record uint8 overflow: east_edge_count=256 (valid: 0-255). cell index=1, center=(2.50, 1.50)")
+
+    monkeypatch.setattr(assembly, "_generate_cell_record_from_geometry", fake_generate_cell_record_from_geometry)
+
+    cell_data = struct.pack(">BQ", 1, 2)
+    cell_edges = [[[], [], [], []]]
+
+    with pytest.raises(ValueError, match=r"level=1, global_id=2"):
+        assembly._batch_cell_records_worker(
+            (cell_data, cell_edges, 0),
+            [0.0, 0.0, 10.0, 10.0],
+            meta_level_info=[{}, {"width": 2}],
+            grid_info=[[1.0, 1.0]],
+            dem_path=None,
+            lum_path=None,
+        )
+
+
 def test_generate_edge_record_from_precomputed_geometry_matches_existing_shape():
     expected = struct.pack(
         "!QBddddQQdi",
@@ -113,6 +133,33 @@ def test_get_edge_coordinates_rejects_unknown_direction():
 
     with pytest.raises(ValueError, match="Unexpected edge direction=2"):
         assembly._get_edge_coordinates(edge_data, [0.0, 0.0, 1.0, 1.0])
+
+
+def test_batch_edge_records_worker_clamps_out_of_range_lum_type(monkeypatch):
+    class FakeRaster:
+        dtypes = ["uint16"]
+        nodata = None
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(assembly.os.path, "exists", lambda path: True)
+    monkeypatch.setattr(assembly.rasterio, "open", lambda path: FakeRaster())
+    monkeypatch.setattr(assembly, "_get_raster_value", lambda *args, **kwargs: 300.0)
+
+    edge_data = struct.pack("!BIIIIII", 1, 1, 1, 2, 1, 3, 1)
+    chunk = assembly._batch_edge_records_worker(
+        ([edge_data], [[7, 8]], 0),
+        [0.0, 0.0, 10.0, 10.0],
+        dem_path=None,
+        lum_path="fake-lum.tif",
+    )
+
+    record_len = struct.unpack("!I", chunk[:4])[0]
+    record = chunk[4 : 4 + record_len]
+    unpacked = struct.unpack("!QBddddQQdi", record)
+
+    assert unpacked[-1] == 0
 
 
 @pytest.mark.parametrize(
@@ -152,6 +199,7 @@ def test_record_workers_emit_separate_dem_and_lum_timing(monkeypatch, worker, ar
 
     getattr(assembly, worker)(args, [0.0, 0.0, 1.0, 1.0], dem_path=None, lum_path=None, **extra_kwargs)
 
+    assert f"{prefix}_total" in calls
     assert f"{prefix}.pack" in calls
     assert f"{prefix}.dem_sample" in calls
     assert f"{prefix}.lum_sample" in calls

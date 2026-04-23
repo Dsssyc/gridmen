@@ -899,6 +899,7 @@ def _batch_cell_records_worker(
     try:
         cell_count = len(cell_data) // 9 # each cell has 9 bytes (level: uint8 + global_id: uint64)
         with timed("record.cell.worker_total", count=cell_count, dem=bool(dem_src), lum=bool(lum_src)):
+            identities: list[tuple[int, int]] = []
             geometries: list[tuple[float, float, float, float, float, float]] = []
             for i in range(cell_count):
                 start = i * 9
@@ -907,6 +908,7 @@ def _batch_cell_records_worker(
                 min_xs, min_ys, max_xs, max_ys = _get_cell_coordinates(level, global_id, bbox, meta_level_info, grid_info)
                 center_x = (min_xs + max_xs) / 2.0
                 center_y = (min_ys + max_ys) / 2.0
+                identities.append((level, global_id))
                 geometries.append((min_xs, min_ys, max_xs, max_ys, center_x, center_y))
 
             altitudes = [-9999.0] * cell_count
@@ -934,16 +936,20 @@ def _batch_cell_records_worker(
 
             with timed("record.cell.worker.pack", count=cell_count):
                 for i, (min_xs, min_ys, max_xs, max_ys, _, _) in enumerate(geometries):
-                    record = _generate_cell_record_from_geometry(
-                        index=offset + i,
-                        min_xs=min_xs,
-                        min_ys=min_ys,
-                        max_xs=max_xs,
-                        max_ys=max_ys,
-                        edges=cell_edges[i],
-                        altitude=altitudes[i],
-                        lum_type=lum_types[i],
-                    )
+                    level, global_id = identities[i]
+                    try:
+                        record = _generate_cell_record_from_geometry(
+                            index=offset + i,
+                            min_xs=min_xs,
+                            min_ys=min_ys,
+                            max_xs=max_xs,
+                            max_ys=max_ys,
+                            edges=cell_edges[i],
+                            altitude=altitudes[i],
+                            lum_type=lum_types[i],
+                        )
+                    except ValueError as exc:
+                        raise ValueError(f"{exc}, level={level}, global_id={global_id}") from exc
                     records.extend(struct.pack('!I', len(record)))
                     records.extend(record)
     finally:
@@ -1093,7 +1099,14 @@ def _batch_edge_records_worker(args: tuple[list[bytes], list[list[int | None]]],
                     for i, (_, _, _, _, _, center_x, center_y) in enumerate(geometries):
                         val = _get_raster_value(lum_src, center_x, center_y, src_crs=src_crs)
                         if val is not None:
-                            lum_types[i] = int(val)
+                            raw_lum = int(val)
+                            if not (0 <= raw_lum <= 255):
+                                print(f"[WARNING] Edge lum_type={raw_lum} out of uint8 range at ({center_x:.2f}, {center_y:.2f}), "
+                                      f"raw_val={val}, raster_dtype={lum_src.dtypes[0]}, nodata={lum_src.nodata}. Clamping to 0.",
+                                      flush=True)
+                                lum_types[i] = 0
+                            else:
+                                lum_types[i] = raw_lum
 
             with timed("record.edge.worker.pack", count=edge_count):
                 for i, (direction, x_min, y_min, x_max, y_max, _, _) in enumerate(geometries):
