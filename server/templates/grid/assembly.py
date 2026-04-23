@@ -770,59 +770,18 @@ def _generate_cell_record(
 ) -> bytearray:
     level, global_id = struct.unpack('>BQ', key)
     min_xs, min_ys, max_xs, max_ys = _get_cell_coordinates(level, global_id, bbox, meta_level_info, grid_info)
-
-    unpacked_info = [
-        index + 1,                                                              # index (1-based)
-        min_xs, min_ys, max_xs, max_ys,                                         # grid coordinates
-        altitude,                                                               # altitude
-        lum_type,                                                               # type
-        len(edges[EdgeCode.WEST]),                                              # west edge count
-        len(edges[EdgeCode.EAST]),                                              # east edge count
-        len(edges[EdgeCode.SOUTH]),                                             # south edge count
-        len(edges[EdgeCode.NORTH]),                                             # north edge count
-        *[edge_index + 1 for edge_index in edges[EdgeCode.WEST]],              # west edge indices (1-based, pre-sorted)
-        *[edge_index + 1 for edge_index in edges[EdgeCode.EAST]],              # east edge indices (1-based, pre-sorted)
-        *[edge_index + 1 for edge_index in edges[EdgeCode.SOUTH]],             # south edge indices (1-based, pre-sorted)
-        *[edge_index + 1 for edge_index in edges[EdgeCode.NORTH]],             # north edge indices (1-based, pre-sorted)
-    ]
-    
-    unpacked_info_type = [
-        'Q',                                    # index (uint64)
-        'd', 'd', 'd', 'd',                     # cell coordinates (double)
-        'd',                                    # altitude (double)
-        'B',                                    # type (uint8)
-        'B',                                    # west edge count (uint8)
-        'B',                                    # east edge count (uint8)
-        'B',                                    # south edge count (uint8)
-        'B',                                    # north edge count (uint8)
-        *['Q'] * len(edges[EdgeCode.WEST]),     # west edge indices (list of uint64)
-        *['Q'] * len(edges[EdgeCode.EAST]),     # east edge indices (list of uint64)
-        *['Q'] * len(edges[EdgeCode.SOUTH]),    # south edge indices (list of uint64)
-        *['Q'] * len(edges[EdgeCode.NORTH]),    # north edge indices (list of uint64)
-    ]
-    
-    # Validate all 'B' fields before packing
-    b_field_names = ['lum_type', 'west_edge_count', 'east_edge_count', 'south_edge_count', 'north_edge_count']
-    b_field_values = [lum_type, len(edges[EdgeCode.WEST]), len(edges[EdgeCode.EAST]), len(edges[EdgeCode.SOUTH]), len(edges[EdgeCode.NORTH])]
-    for fname, fval in zip(b_field_names, b_field_values):
-        if not (0 <= fval <= 255):
-            raise ValueError(
-                f"Cell record uint8 overflow: {fname}={fval} (valid: 0-255). "
-                f"cell index={index + 1}, level={level}, global_id={global_id}, "
-                f"center=({(min_xs + max_xs) / 2:.2f}, {(min_ys + max_ys) / 2:.2f}), "
-                f"all B fields: {dict(zip(b_field_names, b_field_values))}"
-            )
-
-    packed_record = bytearray()
-    for value, value_type in zip(unpacked_info, unpacked_info_type):
-        if value_type == 'Q':  # uint64
-            packed_record.extend(struct.pack('!Q', value))
-        elif value_type == 'B':  # uint8
-            packed_record.extend(struct.pack('!B', value))
-        elif value_type == 'd':  # double
-            packed_record.extend(struct.pack('!d', value))
-    
-    return packed_record
+    return bytearray(
+        _generate_cell_record_from_geometry(
+            index=index,
+            min_xs=min_xs,
+            min_ys=min_ys,
+            max_xs=max_xs,
+            max_ys=max_ys,
+            edges=edges,
+            altitude=altitude,
+            lum_type=lum_type,
+        )
+    )
 
 def _generate_cell_record_from_geometry(
     index,
@@ -936,45 +895,54 @@ def _batch_cell_records_worker(
     records = bytearray()
     try:
         cell_count = len(cell_data) // 9 # each cell has 9 bytes (level: uint8 + global_id: uint64)
-        for i in range(cell_count):
-            start = i * 9
-            end = start + 9
-            key = cell_data[start:end]
-            
-            # Get edges for this cell
-            edges = cell_edges[i]
+        with timed("record.cell.worker_total", count=cell_count, dem=bool(dem_src), lum=bool(lum_src)):
+            geometries: list[tuple[float, float, float, float, float, float]] = []
+            for i in range(cell_count):
+                start = i * 9
+                end = start + 9
+                level, global_id = struct.unpack('>BQ', cell_data[start:end])
+                min_xs, min_ys, max_xs, max_ys = _get_cell_coordinates(level, global_id, bbox, meta_level_info, grid_info)
+                center_x = (min_xs + max_xs) / 2.0
+                center_y = (min_ys + max_ys) / 2.0
+                geometries.append((min_xs, min_ys, max_xs, max_ys, center_x, center_y))
 
-            # Sample properties
-            level, global_id = struct.unpack('>BQ', key)
-            min_xs, min_ys, max_xs, max_ys = _get_cell_coordinates(level, global_id, bbox, meta_level_info, grid_info)
-            center_x = (min_xs + max_xs) / 2.0
-            center_y = (min_ys + max_ys) / 2.0
-            
-            altitude = -9999.0
-            if dem_src:
-                val = _get_raster_value(dem_src, center_x, center_y, src_crs=src_crs)
-                if val is not None:
-                    altitude = float(val)
-            
-            lum_type = 0
-            if lum_src:
-                val = _get_raster_value(lum_src, center_x, center_y, src_crs=src_crs)
-                if val is not None:
-                    raw_lum = int(val)
-                    if not (0 <= raw_lum <= 255):
-                        print(f"[WARNING] Cell lum_type={raw_lum} out of uint8 range at ({center_x:.2f}, {center_y:.2f}), "
-                              f"raw_val={val}, raster_dtype={lum_src.dtypes[0]}, nodata={lum_src.nodata}. Clamping to 0.",
-                              flush=True)
-                        lum_type = 0
-                    else:
-                        lum_type = raw_lum
-            
-            # Generate cell record
-            record =  _generate_cell_record(offset + i, key, edges, bbox, meta_level_info, grid_info, altitude, lum_type)
-            length_prefix = struct.pack('!I', len(record)) 
-            
-            records += length_prefix
-            records += record
+            altitudes = [-9999.0] * cell_count
+            with timed("record.cell.worker.dem_sample", count=cell_count):
+                if dem_src:
+                    for i, (_, _, _, _, center_x, center_y) in enumerate(geometries):
+                        val = _get_raster_value(dem_src, center_x, center_y, src_crs=src_crs)
+                        if val is not None:
+                            altitudes[i] = float(val)
+
+            lum_types = [0] * cell_count
+            with timed("record.cell.worker.lum_sample", count=cell_count):
+                if lum_src:
+                    for i, (_, _, _, _, center_x, center_y) in enumerate(geometries):
+                        val = _get_raster_value(lum_src, center_x, center_y, src_crs=src_crs)
+                        if val is not None:
+                            raw_lum = int(val)
+                            if not (0 <= raw_lum <= 255):
+                                print(f"[WARNING] Cell lum_type={raw_lum} out of uint8 range at ({center_x:.2f}, {center_y:.2f}), "
+                                      f"raw_val={val}, raster_dtype={lum_src.dtypes[0]}, nodata={lum_src.nodata}. Clamping to 0.",
+                                      flush=True)
+                                lum_types[i] = 0
+                            else:
+                                lum_types[i] = raw_lum
+
+            with timed("record.cell.worker.pack", count=cell_count):
+                for i, (min_xs, min_ys, max_xs, max_ys, _, _) in enumerate(geometries):
+                    record = _generate_cell_record_from_geometry(
+                        index=offset + i,
+                        min_xs=min_xs,
+                        min_ys=min_ys,
+                        max_xs=max_xs,
+                        max_ys=max_ys,
+                        edges=cell_edges[i],
+                        altitude=altitudes[i],
+                        lum_type=lum_types[i],
+                    )
+                    records.extend(struct.pack('!I', len(record)))
+                    records.extend(record)
     finally:
         if dem_src: dem_src.close()
         if lum_src: lum_src.close()
@@ -990,10 +958,11 @@ def _record_cell_topology(
     dem_path: str = None, lum_path: str = None, src_crs: str = "EPSG:4326"
 ):
     batch_size = 10000
-    batch_args = [
-        (grid_cache.slice_cells(i, batch_size), grid_cache.slice_edges(i, batch_size), i)
-        for i in range(0, len(grid_cache), batch_size)
-    ]
+    with timed("record.cell.build_batch_args", n_batches=math.ceil(len(grid_cache) / batch_size) if len(grid_cache) else 0):
+        batch_args = [
+            (grid_cache.slice_cells(i, batch_size), grid_cache.slice_edges(i, batch_size), i)
+            for i in range(0, len(grid_cache), batch_size)
+        ]
     batch_func = partial(
         _batch_cell_records_worker,
         bbox=meta_bounds,
@@ -1005,9 +974,11 @@ def _record_cell_topology(
     )
     
     num_processes = min(os.cpu_count(), len(batch_args))
-    with mp.Pool(processes=num_processes) as pool, open(grid_record_path, 'wb') as f:
-        for cell_records_chunk in pool.imap(batch_func, batch_args):
-            f.write(cell_records_chunk)
+    with timed("record.cell.pool_total", n_batches=len(batch_args), dem=bool(dem_path), lum=bool(lum_path)):
+        with mp.Pool(processes=num_processes) as pool, open(grid_record_path, 'wb') as f:
+            for cell_records_chunk in pool.imap(batch_func, batch_args):
+                with timed("record.cell.parent_write", chunk_bytes=len(cell_records_chunk)):
+                    f.write(cell_records_chunk)
 
 def _slice_edge_info(
     start_index: int, length: int,
@@ -1021,33 +992,41 @@ def _slice_edge_info(
     edge_adj_cell_indices = edge_adj_cell_indices[start_index:end_index]
     return edge_indices, edge_adj_cell_indices
 
-def _generate_edge_record(index: int, edge_data: bytes, edge_grids: list[int | None], bbox: list[float], altitude: float = -9999.0, lum_type: int = 0) -> bytearray:
+
+def _get_edge_coordinates(edge_data: bytes, bbox: list[float]) -> tuple[int, float, float, float, float]:
     direction, min_num, min_den, max_num, max_den, shared_num, shared_den = struct.unpack('!BIIIIII', edge_data)
     x_min: float
     x_max: float
     y_min: float
     y_max: float
-    
+
     if direction == 0:      # vertical edge
         x_min = bbox[0] + (shared_num / shared_den) * (bbox[2] - bbox[0])
         x_max = x_min
         y_min = bbox[1] + (min_num / min_den) * (bbox[3] - bbox[1])
         y_max = bbox[1] + (max_num / max_den) * (bbox[3] - bbox[1])
-    elif direction == 1:    # horizontal edge
+    else:    # horizontal edge
         x_min = bbox[0] + (min_num / min_den) * (bbox[2] - bbox[0])
         x_max = bbox[0] + (max_num / max_den) * (bbox[2] - bbox[0])
         y_min = bbox[1] + (shared_num / shared_den) * (bbox[3] - bbox[1])
         y_max = y_min
-    
-    return struct.pack(
-        '!QBddddQQdi',  # Added di for altitude and type
-        index + 1,  # index (1-based)
-        direction,
-        x_min, y_min, x_max, y_max,
-        edge_grids[0] + 1 if edge_grids[0] is not None else 0, # cell_index_a (1-based)
-        edge_grids[1] + 1 if edge_grids[1] is not None else 0,  # cell_index_b (1-based)
-        altitude,
-        lum_type
+
+    return direction, x_min, y_min, x_max, y_max
+
+def _generate_edge_record(index: int, edge_data: bytes, edge_grids: list[int | None], bbox: list[float], altitude: float = -9999.0, lum_type: int = 0) -> bytearray:
+    direction, x_min, y_min, x_max, y_max = _get_edge_coordinates(edge_data, bbox)
+    return bytearray(
+        _generate_edge_record_from_geometry(
+            index=index,
+            direction=direction,
+            x_min=x_min,
+            y_min=y_min,
+            x_max=x_max,
+            y_max=y_max,
+            edge_grids=edge_grids,
+            altitude=altitude,
+            lum_type=lum_type,
+        )
     )
 
 def _generate_edge_record_from_geometry(
@@ -1084,47 +1063,48 @@ def _batch_edge_records_worker(args: tuple[list[bytes], list[list[int | None]]],
     lum_src = rasterio.open(lum_path) if lum_path and os.path.exists(lum_path) else None
 
     records = bytearray()
-    
+
     try:
         edge_count = len(edge_data)
-        for i in range(edge_count):
-            edge = edge_data[i]
-            
-            # Unpack to get coords for sampling
-            direction, min_num, min_den, max_num, max_den, shared_num, shared_den = struct.unpack('!BIIIIII', edge)
-            x_min, x_max, y_min, y_max = 0.0, 0.0, 0.0, 0.0
-            
-            if direction == 0: # vertical
-                x_min = bbox[0] + (shared_num / shared_den) * (bbox[2] - bbox[0])
-                x_max = x_min
-                y_min = bbox[1] + (min_num / min_den) * (bbox[3] - bbox[1])
-                y_max = bbox[1] + (max_num / max_den) * (bbox[3] - bbox[1])
-            elif direction == 1: # horizontal
-                x_min = bbox[0] + (min_num / min_den) * (bbox[2] - bbox[0])
-                x_max = bbox[0] + (max_num / max_den) * (bbox[2] - bbox[0])
-                y_min = bbox[1] + (shared_num / shared_den) * (bbox[3] - bbox[1])
-                y_max = y_min
-            
-            center_x = (x_min + x_max) / 2.0
-            center_y = (y_min + y_max) / 2.0
+        with timed("record.edge.worker_total", count=edge_count, dem=bool(dem_src), lum=bool(lum_src)):
+            geometries: list[tuple[int, float, float, float, float, float, float]] = []
+            for edge in edge_data:
+                direction, x_min, y_min, x_max, y_max = _get_edge_coordinates(edge, bbox)
+                center_x = (x_min + x_max) / 2.0
+                center_y = (y_min + y_max) / 2.0
+                geometries.append((direction, x_min, y_min, x_max, y_max, center_x, center_y))
 
-            altitude = -9999.0
-            if dem_src:
-                val = _get_raster_value(dem_src, center_x, center_y, src_crs=src_crs)
-                if val is not None:
-                    altitude = float(val)
-            
-            lum_type = 0
-            if lum_src:
-                val = _get_raster_value(lum_src, center_x, center_y, src_crs=src_crs)
-                if val is not None:
-                    lum_type = int(val)
+            altitudes = [-9999.0] * edge_count
+            with timed("record.edge.worker.dem_sample", count=edge_count):
+                if dem_src:
+                    for i, (_, _, _, _, _, center_x, center_y) in enumerate(geometries):
+                        val = _get_raster_value(dem_src, center_x, center_y, src_crs=src_crs)
+                        if val is not None:
+                            altitudes[i] = float(val)
 
-            record = _generate_edge_record(offset + i, edge, edge_cells[i], bbox, altitude, lum_type)
-            length_prefix = struct.pack('!I', len(record))
-            
-            records += length_prefix
-            records += record
+            lum_types = [0] * edge_count
+            with timed("record.edge.worker.lum_sample", count=edge_count):
+                if lum_src:
+                    for i, (_, _, _, _, _, center_x, center_y) in enumerate(geometries):
+                        val = _get_raster_value(lum_src, center_x, center_y, src_crs=src_crs)
+                        if val is not None:
+                            lum_types[i] = int(val)
+
+            with timed("record.edge.worker.pack", count=edge_count):
+                for i, (direction, x_min, y_min, x_max, y_max, _, _) in enumerate(geometries):
+                    record = _generate_edge_record_from_geometry(
+                        index=offset + i,
+                        direction=direction,
+                        x_min=x_min,
+                        y_min=y_min,
+                        x_max=x_max,
+                        y_max=y_max,
+                        edge_grids=edge_cells[i],
+                        altitude=altitudes[i],
+                        lum_type=lum_types[i],
+                    )
+                    records.extend(struct.pack('!I', len(record)))
+                    records.extend(record)
     finally:
         if dem_src: dem_src.close()
         if lum_src: lum_src.close()
@@ -1139,10 +1119,11 @@ def _record_edge_topology(
     dem_path: str = None, lum_path: str = None, src_crs: str = "EPSG:4326"
 ):
     batch_size = 10000
-    batch_args = [
-        (*_slice_edge_info(i, batch_size, edge_index_cache, edge_adj_cell_indices), i)
-        for i in range(0, len(edge_index_cache), batch_size)
-    ]
+    with timed("record.edge.build_batch_args", n_batches=math.ceil(len(edge_index_cache) / batch_size) if len(edge_index_cache) else 0):
+        batch_args = [
+            (*_slice_edge_info(i, batch_size, edge_index_cache, edge_adj_cell_indices), i)
+            for i in range(0, len(edge_index_cache), batch_size)
+        ]
     batch_func = partial(
         _batch_edge_records_worker,
         bbox=meta_bounds,
@@ -1151,9 +1132,11 @@ def _record_edge_topology(
         src_crs=src_crs
     )
     num_processes = min(os.cpu_count(), len(batch_args))
-    with mp.Pool(processes=num_processes) as pool, open(edge_record_path, 'wb') as f:
-        for edge_records_chunk in pool.imap(batch_func, batch_args):
-            f.write(edge_records_chunk)
+    with timed("record.edge.pool_total", n_batches=len(batch_args), dem=bool(dem_path), lum=bool(lum_path)):
+        with mp.Pool(processes=num_processes) as pool, open(edge_record_path, 'wb') as f:
+            for edge_records_chunk in pool.imap(batch_func, batch_args):
+                with timed("record.edge.parent_write", chunk_bytes=len(edge_records_chunk)):
+                    f.write(edge_records_chunk)
 
 def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str], grading_threshold: int = 1, dem_path: str = None, lum_path: str = None):
     # Create workspace directory (already done by resource_dir, but for consistency with original arg)

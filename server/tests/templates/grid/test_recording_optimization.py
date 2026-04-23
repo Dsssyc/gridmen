@@ -104,3 +104,28 @@ def test_generate_edge_record_from_precomputed_geometry_matches_existing_shape()
     assert isinstance(record, (bytes, bytearray))
     assert record == expected
     assert len(record) == struct.calcsize("!QBddddQQdi")
+
+
+def test_record_workers_emit_separate_dem_and_lum_timing(monkeypatch):
+    calls = []
+
+    def fake_timed(label, **extra):
+        calls.append(label)
+
+        class _Ctx:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        return _Ctx()
+
+    monkeypatch.setattr(assembly, "timed", fake_timed)
+    monkeypatch.setattr(assembly, "_get_raster_value", lambda *args, **kwargs: None)
+
+    assembly._batch_edge_records_worker(([], [], 0), [0.0, 0.0, 1.0, 1.0], dem_path=None, lum_path=None)
+
+    assert "record.edge.worker.pack" in calls
+    assert "record.edge.worker.dem_sample" in calls
+    assert "record.edge.worker.lum_sample" in calls
