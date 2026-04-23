@@ -3,17 +3,32 @@ import json
 import shutil
 import tarfile
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from pynoodle import noodle
 
 from .assembly import assembly
-from crms.grid import HydroElements, HydroSides, BlockGenerator
-from .vector import write_ns, write_ne, apply_vector_modification, get_ne, get_ns
+from crms.grid import HydroElements, HydroSides
+from .vector import (
+    apply_vector_modification,
+    build_model_data_from_topology,
+    get_ne,
+    get_ns,
+    write_ne,
+    write_ns,
+)
 from ._timing import timed, timing_logger
 
 logger = logging.getLogger(__name__)
 
 # --- Lifecycle Hooks ---
+
+
+@dataclass
+class MountAssemblyResult:
+    ne_topology: HydroElements
+    ns_topology: HydroSides
+    model_data: dict
 
 def MOUNT(node_key: str, params: dict | None = None):
     """
@@ -39,16 +54,23 @@ def MOUNT(node_key: str, params: dict | None = None):
     with timed("MOUNT", node_key=node_key,
                has_assembly='assembly' in params,
                has_vector=bool(params.get('vector'))):
+        assembly_result = None
+
         # Handle assembly if present
         if 'assembly' in params:
             with timed("MOUNT.assembly", node_key=node_key):
-                _handle_assembly(assembly_params, node_key, resource_dir)
+                assembly_result = _handle_assembly(assembly_params, node_key, resource_dir)
 
         # Handle vector if present
         if 'vector' in params and params['vector']:
             with timed("MOUNT.vector", node_key=node_key,
                        n_entries=len(params['vector']) if isinstance(params['vector'], list) else 1):
-                _handle_vector_modification(params, resource_dir)
+                model_data = None if assembly_result is None else assembly_result.model_data
+                _handle_vector_modification(params, resource_dir, model_data=model_data)
+        elif assembly_result is not None:
+            with timed("mount.persist_ne_ns_once", path=str(resource_dir)):
+                write_ne(resource_dir / 'ne.txt', assembly_result.model_data['ne'])
+                write_ns(resource_dir / 'ns.txt', assembly_result.model_data['ns'])
 
 
 # ===== Grid Mount Handlers =====
@@ -71,18 +93,12 @@ def _handle_assembly(assembly_params: dict, node_key: str, resource_dir: Path):
         with timed("assembly.load_topology"):
             ne = HydroElements(str(resource_dir / 'cell_topo.bin'))
             ns = HydroSides(str(resource_dir / 'edge_topo.bin'))
-        with timed("assembly.export_ne_ns_text", n_ne=len(ne.es), n_ns=len(ns.ss)):
-            ne.export_ne(str(resource_dir / 'ne.txt'))
-            ns.export_ns(str(resource_dir / 'ns.txt'))
-
-        print(f"Total elements loaded for block generation: {len(ne.es)}")
-        blocks_output_dir = resource_dir / 'blocks'
-        with timed("assembly.block_generation", n_elements=len(ne.es)):
-            generator = BlockGenerator(output_dir=str(blocks_output_dir), base_name=node_key)
-            generator.process(ne.es)
+        with timed("mount.build_model_data_from_topology"):
+            model_data = build_model_data_from_topology(ne, ns)
 
         with open(meta_path, 'w', encoding='utf-8') as f:
             json.dump(meta_info, f, indent=4)
+        return MountAssemblyResult(ne_topology=ne, ns_topology=ns, model_data=model_data)
     except Exception as e:
         logger.error(f"Error during assembly for {node_key}: {e}")
         raise
