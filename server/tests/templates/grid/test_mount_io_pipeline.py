@@ -17,6 +17,30 @@ templates_grid_pkg.__path__ = [str(SERVER_ROOT / "templates" / "grid")]
 sys.modules.setdefault("templates.grid", templates_grid_pkg)
 
 
+def load_grid_hooks_module():
+    sys.modules.pop("templates.grid.hooks", None)
+
+    pynoodle_module = types.ModuleType("pynoodle")
+    pynoodle_module.noodle = object()
+    sys.modules.setdefault("pynoodle", pynoodle_module)
+
+    assembly_module = types.ModuleType("templates.grid.assembly")
+    assembly_module.assembly = lambda *args, **kwargs: None
+    sys.modules["templates.grid.assembly"] = assembly_module
+
+    crms_pkg = types.ModuleType("crms")
+    crms_pkg.__path__ = [str(SERVER_ROOT / "crms")]
+    sys.modules.setdefault("crms", crms_pkg)
+
+    crms_grid_module = types.ModuleType("crms.grid")
+    crms_grid_module.HydroElements = type("HydroElements", (), {})
+    crms_grid_module.HydroSides = type("HydroSides", (), {})
+    crms_grid_module.BlockGenerator = type("BlockGenerator", (), {})
+    sys.modules["crms.grid"] = crms_grid_module
+
+    return import_module("templates.grid.hooks")
+
+
 def test_build_model_data_from_topology_preserves_ne_and_ns_layout():
     build_model_data_from_topology = import_module("templates.grid.vector").build_model_data_from_topology
     ne_topology = SimpleNamespace(
@@ -59,3 +83,21 @@ def test_build_model_data_from_topology_preserves_ne_and_ns_layout():
     assert ns.y_side_list == [0.0, 400.0]
     assert ns.z_side_list == [0.0, 5.5]
     assert ns.s_type_list == [0, 9]
+
+
+def test_mount_fast_path_uses_in_memory_model_data(monkeypatch, tmp_path: Path):
+    grid_hooks = load_grid_hooks_module()
+    params = {"vector": [{"node_key": ".HK.evaluation.gate", "dem": {"type": "set", "value": 5}}]}
+    model_data = {"ne": object(), "ns": object()}
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(grid_hooks, "get_ne", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not read ne.txt")))
+    monkeypatch.setattr(grid_hooks, "get_ns", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not read ns.txt")))
+    monkeypatch.setattr(grid_hooks, "apply_vector_modification", lambda given_params, given_model: calls.append(("apply", given_model)) or given_model)
+    monkeypatch.setattr(grid_hooks, "write_ne", lambda _path, ne_data: calls.append(("write_ne", ne_data)))
+    monkeypatch.setattr(grid_hooks, "write_ns", lambda _path, ns_data: calls.append(("write_ns", ns_data)))
+
+    result = grid_hooks._handle_vector_modification(params, tmp_path, model_data=model_data)
+
+    assert result is model_data
+    assert calls == [("apply", model_data), ("write_ne", model_data["ne"]), ("write_ns", model_data["ns"])]

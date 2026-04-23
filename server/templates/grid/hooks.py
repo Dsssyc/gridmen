@@ -87,44 +87,38 @@ def _handle_assembly(assembly_params: dict, node_key: str, resource_dir: Path):
         logger.error(f"Error during assembly for {node_key}: {e}")
         raise
 
-def _handle_vector_modification(params: dict, resource_dir: Path):
+def _handle_vector_modification(params: dict, resource_dir: Path, model_data: dict | None = None):
     """处理矢量数据修改逻辑"""
-    # Load existing NE and NS files
     ne_path = resource_dir / 'ne.txt'
     ns_path = resource_dir / 'ns.txt'
-    
-    if not (ne_path.exists() and ns_path.exists()):
-        logger.warning(f"NE or NS files not found at {resource_dir}. Skipping vector modification.")
-        return
-    
+    model_source = 'in_memory' if model_data is not None else 'file'
+
     try:
-        # Load the existing data
-        with timed("vector.read_ne", path=str(ne_path)):
-            ne_data = get_ne(ne_path)
-        with timed("vector.read_ns", path=str(ns_path)):
-            ns_data = get_ns(ns_path)
+        if model_data is None:
+            if not (ne_path.exists() and ns_path.exists()):
+                logger.warning(f"NE or NS files not found at {resource_dir}. Skipping vector modification.")
+                return
 
-        # Prepare model data dictionary
-        model_data = {
-            'ne': ne_data,
-            'ns': ns_data
-        }
+            with timed("vector.read_ne", path=str(ne_path)):
+                ne_data = get_ne(ne_path)
+            with timed("vector.read_ns", path=str(ns_path)):
+                ns_data = get_ns(ns_path)
+            model_data = {
+                'ne': ne_data,
+                'ns': ns_data
+            }
 
-        # Apply vector modifications
+        timing_logger.debug("mount.vector_input source=%s", model_source)
+
         with timed("vector.apply_modifications"):
             modified_model_data = apply_vector_modification(params, model_data)
 
-        # Extract modified data
-        modified_ne_data = modified_model_data['ne']
-        modified_ns_data = modified_model_data['ns']
-
-        # Write the modified data back to files
-        with timed("vector.write_ne", path=str(ne_path)):
-            write_ne(ne_path, modified_ne_data)
-        with timed("vector.write_ns", path=str(ns_path)):
-            write_ns(ns_path, modified_ns_data)
+        with timed("mount.persist_ne_ns_once", path=str(resource_dir)):
+            write_ne(ne_path, modified_model_data['ne'])
+            write_ns(ns_path, modified_model_data['ns'])
 
         logger.info(f"Successfully applied vector modifications and updated NE and NS files.")
+        return modified_model_data
     except Exception as e:
         logger.error(f"Error during vector modification: {e}")
         raise
@@ -227,4 +221,3 @@ def UNPACK(target_node_key: str, tar_path: str):
             
     except Exception as e:
         raise Exception(f"Error unpacking Grid node {target_node_key}: {e}")
-
