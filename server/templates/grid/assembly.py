@@ -15,9 +15,10 @@ from typing import Callable
 # from crms.patch import Patch
 from icrms.ipatch import IPatch
 from functools import partial
-from rasterio.warp import transform
+from rasterio.transform import rowcol
+from pyproj import Transformer
 
-from ._timing import timed, timing_logger
+from ._timing import timed, timing_logger, log_debug
 
 # --- Define Constants and Enums locally or import if shared ---
 EDGE_CODE_INVALID = -1
@@ -828,67 +829,106 @@ def _generate_cell_record_from_geometry(
         *north,
     )
 
-def _get_raster_value(src, x: float, y: float, src_crs: str = "EPSG:4326") -> float | None:
-    try:
-        # Determine if we need to transform
-        target_x, target_y = x, y
-        transformed = False
-        
-        if src_crs is not None and src.crs is not None:
-             # Use rasterio CRS equality check which is robust
-             try:
-                 input_crs_obj = rasterio.crs.CRS.from_string(src_crs)
-                 if input_crs_obj != src.crs:
-                     # Calculate transform
-                     # Use src.crs directly as destination
-                     tx, ty = transform(input_crs_obj, src.crs, [x], [y])
-                     target_x, target_y = tx[0], ty[0]
-                     transformed = True
-             except Exception as e:
-                 print(f"[Sample Error] CRS transform failed: {e}")
-                 return None
-        
-        # Check bounds using transformed coordinates (safety check before index)
-        # Using rasterio's bounds check
-        if (target_x < src.bounds.left or target_x > src.bounds.right or 
-            target_y < src.bounds.bottom or target_y > src.bounds.top):
-            return None
+def _sample_raster_values(src, points: list[tuple[float, float]], src_crs: str = "EPSG:4326") -> list[float | None]:
+    if not points:
+        return []
 
-        # Get pixel coords using dataset's index method
-        row, col = src.index(target_x, target_y)
-        
-        # specific window read
-        # rasterio Window(col_off, row_off, width, height)
-        window = rasterio.windows.Window(col, row, 1, 1)
-        data = src.read(1, window=window)
-        
-        if data.size == 0:
-            return None
-            
-        val = data[0, 0]
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
 
-        # Check for NaN (possible with floating-point rasters)
+    if src_crs is not None and src.crs is not None:
+        transformer = Transformer.from_crs(src_crs, src.crs, always_xy=True)
+        target_xs, target_ys = transformer.transform(xs, ys)
+    else:
+        target_xs, target_ys = xs, ys
+
+    values: list[float | None] = [None] * len(points)
+    valid_indices: list[int] = []
+    valid_xs: list[float] = []
+    valid_ys: list[float] = []
+
+    for index, (target_x, target_y) in enumerate(zip(target_xs, target_ys)):
+        if (
+            target_x < src.bounds.left
+            or target_x > src.bounds.right
+            or target_y < src.bounds.bottom
+            or target_y > src.bounds.top
+        ):
+            continue
+
+        valid_indices.append(index)
+        valid_xs.append(target_x)
+        valid_ys.append(target_y)
+
+    if not valid_indices:
+        return values
+
+    rows, cols = rowcol(src.transform, valid_xs, valid_ys)
+    block_height, block_width = src.block_shapes[0] if getattr(src, "block_shapes", None) else (1, 1)
+    src_height = getattr(src, "height", 0)
+    src_width = getattr(src, "width", 0)
+    blocks: dict[tuple[int, int], tuple[np.ndarray, int, int]] = {}
+
+    for value_index, row, col in zip(valid_indices, rows, cols):
+        row = int(row)
+        col = int(col)
+        block_row = (row // block_height) * block_height
+        block_col = (col // block_width) * block_width
+        block_key = (block_row, block_col)
+
+        if block_key not in blocks:
+            window_height = block_height if src_height <= 0 else min(block_height, src_height - block_row)
+            window_width = block_width if src_width <= 0 else min(block_width, src_width - block_col)
+            window = rasterio.windows.Window(block_col, block_row, window_width, window_height)
+            blocks[block_key] = (src.read(1, window=window), block_row, block_col)
+
+        data, origin_row, origin_col = blocks[block_key]
+        val = data[row - origin_row, col - origin_col]
+
         if np.issubdtype(data.dtype, np.floating) and np.isnan(val):
-            return None
-        
-        # --- KEY FIX: Rely on np.isclose for float comparison ---
-        if src.nodata is not None:
-             if np.isclose(val, src.nodata):
-                  return None
-             if val == src.nodata:
-                  return None
-            
-        return float(val)
+            continue
 
-    except Exception as e:
-        print(f"[Sample Exception] {e}")
-        return None
+        if src.nodata is not None and (np.isclose(val, src.nodata) or val == src.nodata):
+            continue
+
+        values[value_index] = float(val)
+
+    return values
+
+
+def _get_raster_value(src, x: float, y: float, src_crs: str = "EPSG:4326") -> float | None:
+    values = _sample_raster_values(src, [(x, y)], src_crs=src_crs)
+    return values[0] if values else None
+
+
+def _make_phase_stats() -> dict[str, float]:
+    return {
+        "dem_sample": 0.0,
+        "lum_sample": 0.0,
+        "pack": 0.0,
+    }
+
+
+def _merge_phase_stats(total: dict[str, float], delta: dict[str, float]) -> None:
+    for key, value in delta.items():
+        total[key] = total.get(key, 0.0) + value
+
+
+def _log_phase_totals(label: str, stats: dict[str, float], *, n_batches: int) -> None:
+    log_debug(
+        "%s dem_sample=%.4fs lum_sample=%.4fs pack=%.4fs batches=%d",
+        label,
+        stats["dem_sample"],
+        stats["lum_sample"],
+        stats["pack"],
+        n_batches,
+    )
 
 def _batch_cell_records_worker(
     args: tuple[bytes, list[list[set[int]]]], bbox: list[float],
     meta_level_info: list[dict[str, int]], grid_info: list[list[float]],
     dem_path: str = None, lum_path: str = None, src_crs: str = "EPSG:4326"
-) -> bytearray:
+) -> tuple[bytearray, dict[str, float]]:
     cell_data, cell_edges, offset = args
 
     # Open rasters
@@ -896,67 +936,80 @@ def _batch_cell_records_worker(
     lum_src = rasterio.open(lum_path) if lum_path and os.path.exists(lum_path) else None
 
     records = bytearray()
+    phase_stats = _make_phase_stats()
     try:
         cell_count = len(cell_data) // 9 # each cell has 9 bytes (level: uint8 + global_id: uint64)
-        with timed("record.cell.worker_total", count=cell_count, dem=bool(dem_src), lum=bool(lum_src)):
-            identities: list[tuple[int, int]] = []
-            geometries: list[tuple[float, float, float, float, float, float]] = []
-            for i in range(cell_count):
-                start = i * 9
-                end = start + 9
-                level, global_id = struct.unpack('>BQ', cell_data[start:end])
-                min_xs, min_ys, max_xs, max_ys = _get_cell_coordinates(level, global_id, bbox, meta_level_info, grid_info)
-                center_x = (min_xs + max_xs) / 2.0
-                center_y = (min_ys + max_ys) / 2.0
-                identities.append((level, global_id))
-                geometries.append((min_xs, min_ys, max_xs, max_ys, center_x, center_y))
+        identities: list[tuple[int, int]] = []
+        geometries: list[tuple[float, float, float, float, float, float]] = []
+        for i in range(cell_count):
+            start = i * 9
+            end = start + 9
+            level, global_id = struct.unpack('>BQ', cell_data[start:end])
+            min_xs, min_ys, max_xs, max_ys = _get_cell_coordinates(level, global_id, bbox, meta_level_info, grid_info)
+            center_x = (min_xs + max_xs) / 2.0
+            center_y = (min_ys + max_ys) / 2.0
+            identities.append((level, global_id))
+            geometries.append((min_xs, min_ys, max_xs, max_ys, center_x, center_y))
 
-            altitudes = [-9999.0] * cell_count
-            with timed("record.cell.worker.dem_sample", count=cell_count):
-                if dem_src:
-                    for i, (_, _, _, _, center_x, center_y) in enumerate(geometries):
-                        val = _get_raster_value(dem_src, center_x, center_y, src_crs=src_crs)
-                        if val is not None:
-                            altitudes[i] = float(val)
+        altitudes = [-9999.0] * cell_count
+        dem_started = time.perf_counter()
+        if dem_src:
+            altitude_values = _sample_raster_values(
+                dem_src,
+                [(center_x, center_y) for _, _, _, _, center_x, center_y in geometries],
+                src_crs=src_crs,
+            )
+            for i, val in enumerate(altitude_values):
+                if val is not None:
+                    altitudes[i] = float(val)
+        phase_stats["dem_sample"] = time.perf_counter() - dem_started
 
-            lum_types = [0] * cell_count
-            with timed("record.cell.worker.lum_sample", count=cell_count):
-                if lum_src:
-                    for i, (_, _, _, _, center_x, center_y) in enumerate(geometries):
-                        val = _get_raster_value(lum_src, center_x, center_y, src_crs=src_crs)
-                        if val is not None:
-                            raw_lum = int(val)
-                            if not (0 <= raw_lum <= 255):
-                                print(f"[WARNING] Cell lum_type={raw_lum} out of uint8 range at ({center_x:.2f}, {center_y:.2f}), "
-                                      f"raw_val={val}, raster_dtype={lum_src.dtypes[0]}, nodata={lum_src.nodata}. Clamping to 0.",
-                                      flush=True)
-                                lum_types[i] = 0
-                            else:
-                                lum_types[i] = raw_lum
+        lum_types = [0] * cell_count
+        lum_started = time.perf_counter()
+        if lum_src:
+            lum_values = _sample_raster_values(
+                lum_src,
+                [(center_x, center_y) for _, _, _, _, center_x, center_y in geometries],
+                src_crs=src_crs,
+            )
+            for i, val in enumerate(lum_values):
+                if val is not None:
+                    raw_lum = int(val)
+                    center_x = geometries[i][4]
+                    center_y = geometries[i][5]
+                    if not (0 <= raw_lum <= 255):
+                        print(f"[WARNING] Cell lum_type={raw_lum} out of uint8 range at ({center_x:.2f}, {center_y:.2f}), "
+                              f"raw_val={val}, raster_dtype={lum_src.dtypes[0]}, nodata={lum_src.nodata}. Clamping to 0.",
+                              flush=True)
+                        lum_types[i] = 0
+                    else:
+                        lum_types[i] = raw_lum
+        phase_stats["lum_sample"] = time.perf_counter() - lum_started
 
-            with timed("record.cell.worker.pack", count=cell_count):
-                for i, (min_xs, min_ys, max_xs, max_ys, _, _) in enumerate(geometries):
-                    level, global_id = identities[i]
-                    try:
-                        record = _generate_cell_record_from_geometry(
-                            index=offset + i,
-                            min_xs=min_xs,
-                            min_ys=min_ys,
-                            max_xs=max_xs,
-                            max_ys=max_ys,
-                            edges=cell_edges[i],
-                            altitude=altitudes[i],
-                            lum_type=lum_types[i],
-                        )
-                    except ValueError as exc:
-                        raise ValueError(f"{exc}, level={level}, global_id={global_id}") from exc
-                    records.extend(struct.pack('!I', len(record)))
-                    records.extend(record)
+        pack_started = time.perf_counter()
+        for i, (min_xs, min_ys, max_xs, max_ys, _, _) in enumerate(geometries):
+            level, global_id = identities[i]
+            try:
+                record = _generate_cell_record_from_geometry(
+                    index=offset + i,
+                    min_xs=min_xs,
+                    min_ys=min_ys,
+                    max_xs=max_xs,
+                    max_ys=max_ys,
+                    edges=cell_edges[i],
+                    altitude=altitudes[i],
+                    lum_type=lum_types[i],
+                )
+            except ValueError as exc:
+                raise ValueError(f"{exc}, level={level}, global_id={global_id}") from exc
+            records.extend(struct.pack('!I', len(record)))
+            records.extend(record)
+        phase_stats["pack"] = time.perf_counter() - pack_started
     finally:
         if dem_src: dem_src.close()
         if lum_src: lum_src.close()
 
-    return records
+    return records, phase_stats
 
 def _record_cell_topology(
     grid_cache: GridCache,
@@ -967,11 +1020,10 @@ def _record_cell_topology(
     dem_path: str = None, lum_path: str = None, src_crs: str = "EPSG:4326"
 ):
     batch_size = 10000
-    with timed("record.cell.build_batch_args", n_batches=math.ceil(len(grid_cache) / batch_size) if len(grid_cache) else 0):
-        batch_args = [
-            (grid_cache.slice_cells(i, batch_size), grid_cache.slice_edges(i, batch_size), i)
-            for i in range(0, len(grid_cache), batch_size)
-        ]
+    batch_args = [
+        (grid_cache.slice_cells(i, batch_size), grid_cache.slice_edges(i, batch_size), i)
+        for i in range(0, len(grid_cache), batch_size)
+    ]
     batch_func = partial(
         _batch_cell_records_worker,
         bbox=meta_bounds,
@@ -983,11 +1035,13 @@ def _record_cell_topology(
     )
     
     num_processes = min(os.cpu_count(), len(batch_args))
+    phase_totals = _make_phase_stats()
     with timed("record.cell.pool_total", n_batches=len(batch_args), dem=bool(dem_path), lum=bool(lum_path)):
         with mp.Pool(processes=num_processes) as pool, open(grid_record_path, 'wb') as f:
-            for cell_records_chunk in pool.imap(batch_func, batch_args):
-                with timed("record.cell.parent_write", chunk_bytes=len(cell_records_chunk)):
-                    f.write(cell_records_chunk)
+            for cell_records_chunk, batch_stats in pool.imap(batch_func, batch_args):
+                f.write(cell_records_chunk)
+                _merge_phase_stats(phase_totals, batch_stats)
+    _log_phase_totals("record.cell.phase_totals", phase_totals, n_batches=len(batch_args))
 
 def _slice_edge_info(
     start_index: int, length: int,
@@ -1066,7 +1120,7 @@ def _generate_edge_record_from_geometry(
     )
     return record
 
-def _batch_edge_records_worker(args: tuple[list[bytes], list[list[int | None]]], bbox: list[float], dem_path: str = None, lum_path: str = None, src_crs: str = "EPSG:4326") -> bytes:
+def _batch_edge_records_worker(args: tuple[list[bytes], list[list[int | None]]], bbox: list[float], dem_path: str = None, lum_path: str = None, src_crs: str = "EPSG:4326") -> tuple[bytes, dict[str, float]]:
     edge_data, edge_cells, offset = args
 
     # Open rasters
@@ -1074,60 +1128,73 @@ def _batch_edge_records_worker(args: tuple[list[bytes], list[list[int | None]]],
     lum_src = rasterio.open(lum_path) if lum_path and os.path.exists(lum_path) else None
 
     records = bytearray()
+    phase_stats = _make_phase_stats()
 
     try:
         edge_count = len(edge_data)
-        with timed("record.edge.worker_total", count=edge_count, dem=bool(dem_src), lum=bool(lum_src)):
-            geometries: list[tuple[int, float, float, float, float, float, float]] = []
-            for edge in edge_data:
-                direction, x_min, y_min, x_max, y_max = _get_edge_coordinates(edge, bbox)
-                center_x = (x_min + x_max) / 2.0
-                center_y = (y_min + y_max) / 2.0
-                geometries.append((direction, x_min, y_min, x_max, y_max, center_x, center_y))
+        geometries: list[tuple[int, float, float, float, float, float, float]] = []
+        for edge in edge_data:
+            direction, x_min, y_min, x_max, y_max = _get_edge_coordinates(edge, bbox)
+            center_x = (x_min + x_max) / 2.0
+            center_y = (y_min + y_max) / 2.0
+            geometries.append((direction, x_min, y_min, x_max, y_max, center_x, center_y))
 
-            altitudes = [-9999.0] * edge_count
-            with timed("record.edge.worker.dem_sample", count=edge_count):
-                if dem_src:
-                    for i, (_, _, _, _, _, center_x, center_y) in enumerate(geometries):
-                        val = _get_raster_value(dem_src, center_x, center_y, src_crs=src_crs)
-                        if val is not None:
-                            altitudes[i] = float(val)
+        altitudes = [-9999.0] * edge_count
+        dem_started = time.perf_counter()
+        if dem_src:
+            altitude_values = _sample_raster_values(
+                dem_src,
+                [(center_x, center_y) for _, _, _, _, _, center_x, center_y in geometries],
+                src_crs=src_crs,
+            )
+            for i, val in enumerate(altitude_values):
+                if val is not None:
+                    altitudes[i] = float(val)
+        phase_stats["dem_sample"] = time.perf_counter() - dem_started
 
-            lum_types = [0] * edge_count
-            with timed("record.edge.worker.lum_sample", count=edge_count):
-                if lum_src:
-                    for i, (_, _, _, _, _, center_x, center_y) in enumerate(geometries):
-                        val = _get_raster_value(lum_src, center_x, center_y, src_crs=src_crs)
-                        if val is not None:
-                            raw_lum = int(val)
-                            if not (0 <= raw_lum <= 255):
-                                print(f"[WARNING] Edge lum_type={raw_lum} out of uint8 range at ({center_x:.2f}, {center_y:.2f}), "
-                                      f"raw_val={val}, raster_dtype={lum_src.dtypes[0]}, nodata={lum_src.nodata}. Clamping to 0.",
-                                      flush=True)
-                                lum_types[i] = 0
-                            else:
-                                lum_types[i] = raw_lum
+        lum_types = [0] * edge_count
+        lum_started = time.perf_counter()
+        if lum_src:
+            lum_values = _sample_raster_values(
+                lum_src,
+                [(center_x, center_y) for _, _, _, _, _, center_x, center_y in geometries],
+                src_crs=src_crs,
+            )
+            for i, val in enumerate(lum_values):
+                if val is not None:
+                    raw_lum = int(val)
+                    center_x = geometries[i][5]
+                    center_y = geometries[i][6]
+                    if not (0 <= raw_lum <= 255):
+                        print(f"[WARNING] Edge lum_type={raw_lum} out of uint8 range at ({center_x:.2f}, {center_y:.2f}), "
+                              f"raw_val={val}, raster_dtype={lum_src.dtypes[0]}, nodata={lum_src.nodata}. Clamping to 0.",
+                              flush=True)
+                        lum_types[i] = 0
+                    else:
+                        lum_types[i] = raw_lum
+        phase_stats["lum_sample"] = time.perf_counter() - lum_started
 
-            with timed("record.edge.worker.pack", count=edge_count):
-                for i, (direction, x_min, y_min, x_max, y_max, _, _) in enumerate(geometries):
-                    record = _generate_edge_record_from_geometry(
-                        index=offset + i,
-                        direction=direction,
-                        x_min=x_min,
-                        y_min=y_min,
-                        x_max=x_max,
-                        y_max=y_max,
-                        edge_grids=edge_cells[i],
-                        altitude=altitudes[i],
-                        lum_type=lum_types[i],
-                    )
-                    records.extend(struct.pack('!I', len(record)))
-                    records.extend(record)
+        pack_started = time.perf_counter()
+        for i, (direction, x_min, y_min, x_max, y_max, _, _) in enumerate(geometries):
+            record = _generate_edge_record_from_geometry(
+                index=offset + i,
+                direction=direction,
+                x_min=x_min,
+                y_min=y_min,
+                x_max=x_max,
+                y_max=y_max,
+                edge_grids=edge_cells[i],
+                altitude=altitudes[i],
+                lum_type=lum_types[i],
+            )
+            records.extend(struct.pack('!I', len(record)))
+            records.extend(record)
+        phase_stats["pack"] = time.perf_counter() - pack_started
     finally:
         if dem_src: dem_src.close()
         if lum_src: lum_src.close()
 
-    return records
+    return records, phase_stats
 
 def _record_edge_topology(
     edge_index_cache: list[bytes],
@@ -1137,11 +1204,10 @@ def _record_edge_topology(
     dem_path: str = None, lum_path: str = None, src_crs: str = "EPSG:4326"
 ):
     batch_size = 10000
-    with timed("record.edge.build_batch_args", n_batches=math.ceil(len(edge_index_cache) / batch_size) if len(edge_index_cache) else 0):
-        batch_args = [
-            (*_slice_edge_info(i, batch_size, edge_index_cache, edge_adj_cell_indices), i)
-            for i in range(0, len(edge_index_cache), batch_size)
-        ]
+    batch_args = [
+        (*_slice_edge_info(i, batch_size, edge_index_cache, edge_adj_cell_indices), i)
+        for i in range(0, len(edge_index_cache), batch_size)
+    ]
     batch_func = partial(
         _batch_edge_records_worker,
         bbox=meta_bounds,
@@ -1150,11 +1216,13 @@ def _record_edge_topology(
         src_crs=src_crs
     )
     num_processes = min(os.cpu_count(), len(batch_args))
+    phase_totals = _make_phase_stats()
     with timed("record.edge.pool_total", n_batches=len(batch_args), dem=bool(dem_path), lum=bool(lum_path)):
         with mp.Pool(processes=num_processes) as pool, open(edge_record_path, 'wb') as f:
-            for edge_records_chunk in pool.imap(batch_func, batch_args):
-                with timed("record.edge.parent_write", chunk_bytes=len(edge_records_chunk)):
-                    f.write(edge_records_chunk)
+            for edge_records_chunk, batch_stats in pool.imap(batch_func, batch_args):
+                f.write(edge_records_chunk)
+                _merge_phase_stats(phase_totals, batch_stats)
+    _log_phase_totals("record.edge.phase_totals", phase_totals, n_batches=len(batch_args))
 
 def assembly(resource_dir: str, schema_node_key: str, patch_node_keys: list[str], grading_threshold: int = 1, dem_path: str = None, lum_path: str = None):
     # Create workspace directory (already done by resource_dir, but for consistency with original arg)
