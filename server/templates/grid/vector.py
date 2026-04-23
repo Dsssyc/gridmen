@@ -50,6 +50,45 @@ class NsData:
     z_side_list: list[float]
     s_type_list: list[int]
 
+
+def _build_index_row(indices: list[int]) -> list[int]:
+    row = [0] + [int(index) for index in indices]
+    if len(row) < 10:
+        row.extend([0] * (10 - len(row)))
+    return row
+
+
+def build_model_data_from_topology(ne_topology: Any, ns_topology: Any) -> dict[str, NeData | NsData]:
+    ne_data = NeData([0], [0], [0], [0], [0], [[0] * 10], [[0] * 10], [[0] * 10], [[0] * 10], [0.0], [0.0], [0.0], [0])
+    for element in ne_topology.es:
+        ne_data.grid_id_list.append(int(element.index))
+        ne_data.nsl1_list.append(len(element.left_edges))
+        ne_data.nsl2_list.append(len(element.right_edges))
+        ne_data.nsl3_list.append(len(element.bottom_edges))
+        ne_data.nsl4_list.append(len(element.top_edges))
+        ne_data.isl1_list.append(_build_index_row(element.left_edges))
+        ne_data.isl2_list.append(_build_index_row(element.right_edges))
+        ne_data.isl3_list.append(_build_index_row(element.bottom_edges))
+        ne_data.isl4_list.append(_build_index_row(element.top_edges))
+        x, y, z = element.center
+        ne_data.xe_list.append(float(x))
+        ne_data.ye_list.append(float(y))
+        ne_data.ze_list.append(float(z))
+        ne_data.under_suf_list.append(int(element.type))
+
+    ns_data = NsData([0], [[0, 0, 0, 0, 0]], [0.0], [0.0], [0.0], [0.0], [0])
+    for side in ns_topology.ss:
+        edge_id, direction, left_idx, right_idx, bottom_idx, top_idx, distance, x, y, z, side_type = side.ns
+        ns_data.edge_id_list.append(int(edge_id))
+        ns_data.ise_list.append([int(direction), int(left_idx), int(right_idx), int(bottom_idx), int(top_idx)])
+        ns_data.dis_list.append(float(distance))
+        ns_data.x_side_list.append(float(x))
+        ns_data.y_side_list.append(float(y))
+        ns_data.z_side_list.append(float(z))
+        ns_data.s_type_list.append(int(side_type))
+
+    return {"ne": ne_data, "ns": ns_data}
+
 def write_ne(ne_path: str, ne_data: NeData) -> None:
     """
     将NeData对象写入NE文件
