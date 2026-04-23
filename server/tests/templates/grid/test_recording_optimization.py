@@ -1,6 +1,7 @@
 import sys
 import types
 import struct
+import pytest
 from importlib import import_module
 from pathlib import Path
 
@@ -72,6 +73,7 @@ def test_generate_cell_record_from_precomputed_geometry_rejects_uint8_overflow()
         message = str(exc)
         assert "east_edge_count=256" in message
         assert "Cell record uint8 overflow" in message
+        assert "center=(20.00, 30.00)" in message
     else:
         raise AssertionError("Expected ValueError for uint8 overflow")
 
@@ -106,7 +108,31 @@ def test_generate_edge_record_from_precomputed_geometry_matches_existing_shape()
     assert len(record) == struct.calcsize("!QBddddQQdi")
 
 
-def test_record_workers_emit_separate_dem_and_lum_timing(monkeypatch):
+def test_get_edge_coordinates_rejects_unknown_direction():
+    edge_data = struct.pack("!BIIIIII", 2, 1, 1, 2, 1, 3, 1)
+
+    with pytest.raises(ValueError, match="Unexpected edge direction=2"):
+        assembly._get_edge_coordinates(edge_data, [0.0, 0.0, 1.0, 1.0])
+
+
+@pytest.mark.parametrize(
+    ("worker", "args", "extra_kwargs", "prefix"),
+    [
+        (
+            "_batch_cell_records_worker",
+            (b"", [], 0),
+            {"meta_level_info": [], "grid_info": []},
+            "record.cell.worker",
+        ),
+        (
+            "_batch_edge_records_worker",
+            ([], [], 0),
+            {},
+            "record.edge.worker",
+        ),
+    ],
+)
+def test_record_workers_emit_separate_dem_and_lum_timing(monkeypatch, worker, args, extra_kwargs, prefix):
     calls = []
 
     def fake_timed(label, **extra):
@@ -124,8 +150,8 @@ def test_record_workers_emit_separate_dem_and_lum_timing(monkeypatch):
     monkeypatch.setattr(assembly, "timed", fake_timed)
     monkeypatch.setattr(assembly, "_get_raster_value", lambda *args, **kwargs: None)
 
-    assembly._batch_edge_records_worker(([], [], 0), [0.0, 0.0, 1.0, 1.0], dem_path=None, lum_path=None)
+    getattr(assembly, worker)(args, [0.0, 0.0, 1.0, 1.0], dem_path=None, lum_path=None, **extra_kwargs)
 
-    assert "record.edge.worker.pack" in calls
-    assert "record.edge.worker.dem_sample" in calls
-    assert "record.edge.worker.lum_sample" in calls
+    assert f"{prefix}.pack" in calls
+    assert f"{prefix}.dem_sample" in calls
+    assert f"{prefix}.lum_sample" in calls

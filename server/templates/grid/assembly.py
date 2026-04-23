@@ -801,9 +801,12 @@ def _generate_cell_record_from_geometry(
     b_field_values = [lum_type, len(west), len(east), len(south), len(north)]
     for fname, fval in zip(b_field_names, b_field_values):
         if not (0 <= fval <= 255):
+            center_x = (min_xs + max_xs) / 2.0
+            center_y = (min_ys + max_ys) / 2.0
             raise ValueError(
                 f"Cell record uint8 overflow: {fname}={fval} (valid: 0-255). "
-                f"cell index={index + 1}, all B fields: {dict(zip(b_field_names, b_field_values))}"
+                f"cell index={index + 1}, center=({center_x:.2f}, {center_y:.2f}), "
+                f"all B fields: {dict(zip(b_field_names, b_field_values))}"
             )
     fmt = "!" + "QdddddBBBBB" + ("Q" * (len(west) + len(east) + len(south) + len(north)))
     return struct.pack(
@@ -1005,11 +1008,13 @@ def _get_edge_coordinates(edge_data: bytes, bbox: list[float]) -> tuple[int, flo
         x_max = x_min
         y_min = bbox[1] + (min_num / min_den) * (bbox[3] - bbox[1])
         y_max = bbox[1] + (max_num / max_den) * (bbox[3] - bbox[1])
-    else:    # horizontal edge
+    elif direction == 1:    # horizontal edge
         x_min = bbox[0] + (min_num / min_den) * (bbox[2] - bbox[0])
         x_max = bbox[0] + (max_num / max_den) * (bbox[2] - bbox[0])
         y_min = bbox[1] + (shared_num / shared_den) * (bbox[3] - bbox[1])
         y_max = y_min
+    else:
+        raise ValueError(f"Unexpected edge direction={direction}")
 
     return direction, x_min, y_min, x_max, y_max
 
