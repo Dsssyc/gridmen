@@ -11,12 +11,14 @@ import HitBuffer from './hitBuffer'
 import CustomLayerGroup from './customLayerGroup'
 import { NHCustomLayerInterface } from './interfaces'
 import store from '@/store/store'
+import type { TopologyRenderSample } from './renderSample'
 
 let CHECK_ON_EVENT: Function
 let CHECK_OFF_EVENT: Function
 
 const LEVEL_PALETTE_LENGTH = 256 // Patch level range is 0 - 255 (UInt8)
 const DEFAULT_MAX_CELL_NUM = 4096 * 4096 // 16M cells, a size that most GPUs can handle
+type RenderSampleListener = (sample: TopologyRenderSample) => void
 
 export default class TopologyLayer implements NHCustomLayerInterface {
     // Layer-related ///////////////////////////////////////////////////////
@@ -93,6 +95,7 @@ export default class TopologyLayer implements NHCustomLayerInterface {
     private _boxPickingFBO: WebGLFramebuffer = 0
     private _boxPickingTexture: WebGLTexture = 0
     private _boxPickingRBO: WebGLRenderbuffer = 0
+    private _renderSampleListeners = new Set<RenderSampleListener>()
 
     constructor(public map: Map) {
         // Set WebGL2 context
@@ -181,6 +184,15 @@ export default class TopologyLayer implements NHCustomLayerInterface {
         // Check if GPU resources are initialized
         if (!this.initialized) return false
         return true
+    }
+
+    addRenderSampleListener(listener: RenderSampleListener): () => void {
+        this._renderSampleListeners.add(listener)
+        return () => this.removeRenderSampleListener(listener)
+    }
+
+    removeRenderSampleListener(listener: RenderSampleListener): void {
+        this._renderSampleListeners.delete(listener)
     }
 
     set startCallback(func: Function) {
@@ -754,16 +766,35 @@ export default class TopologyLayer implements NHCustomLayerInterface {
         // Skip if not ready or not visible
         if (!this.isReady || !this.visible) return
 
+        const renderStartMs = performance.now()
+        let passCount = 0
+
         // Tick render
         if (!this.isTransparent) {
             // Mesh Pass
             this.drawCellMeshes()
+            passCount += 1
             // Line Pass
             this.drawCellLines()
+            passCount += 1
         }
 
         // Error check
         gll.errorCheck(gl)
+
+        const renderEndMs = performance.now()
+        this.emitRenderSample({
+            timestampMs: renderEndMs,
+            renderDurationMs: renderEndMs - renderStartMs,
+            cellCount: this.patchCore.cellNum,
+            layerId: this.id,
+            passCount,
+            visible: this.visible,
+        })
+    }
+
+    private emitRenderSample(sample: TopologyRenderSample): void {
+        this._renderSampleListeners.forEach(listener => listener(sample))
     }
 
     drawCellMeshes() {

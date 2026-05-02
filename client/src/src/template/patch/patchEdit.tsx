@@ -48,6 +48,7 @@ import { convertBoundsCoordinates, waitForDrawInstanceLoad, waitForMapLoad } fro
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ensureTopologyLayerInitialized, getOrCreatePerPatchTopology } from '@/views/mapView/topology/topologyLayerManager'
 import { layerOrderCoordinator } from '@/views/mapView/layerOrderCoordinator'
+import { startPatchRenderBenchmark } from './benchmark/renderBenchmarkRunner'
 
 interface PatchEditProps {
     node: IResourceNode
@@ -68,6 +69,7 @@ interface PageContext {
     selectedVectorFeatureIds: Set<string>
     featuePickResource: FeaturePickResource | null
     perPatchCLGId: string | null
+    benchmarkCleanup: (() => void) | null
 }
 
 interface GridCheckingInfo {
@@ -146,6 +148,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         selectedVectorFeatureIds: new Set<string>(),
         featuePickResource: null,
         perPatchCLGId: null,
+        benchmarkCleanup: null,
     })
 
     const gridInfo = useRef<GridCheckingInfo | null>(null)
@@ -220,6 +223,16 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             pageContext.current.topologyLayer.setCheckMode(pageContext.current.isChecking)
         }
 
+        pageContext.current.benchmarkCleanup?.()
+        pageContext.current.benchmarkCleanup = null
+        const benchmarkHandle = startPatchRenderBenchmark({
+            map,
+            topologyLayer: gridLayer,
+            patchId: node.nodeInfo,
+            cellCount: () => patchCore.cellNum,
+        })
+        pageContext.current.benchmarkCleanup = benchmarkHandle?.stop ?? null;
+
         // store.get<{ on: Function, off: Function }>('isLoading')!.off()
         const boundsOn4326 = await convertBoundsCoordinates(pageContext.current.patch!.bounds, pageContext.current.patch!.epsg, 4326)
         map.fitBounds(boundsOn4326, {
@@ -241,6 +254,8 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                     drawInstance.delete(featureIds)
                     pageContext.current.selectedVectorFeatureIds!.clear()
 
+                    pageContext.current.benchmarkCleanup?.()
+                    pageContext.current.benchmarkCleanup = null
                     pageContext.current.topologyLayer = null
                     pageContext.current.patchCore = null
                     layerOrderCoordinator.unregister(node.nodeInfo)
@@ -256,6 +271,8 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         console.log('unloadContext called')
 
         handleClearUploadedFeature();
+        pageContext.current.benchmarkCleanup?.()
+        pageContext.current.benchmarkCleanup = null;
 
         (node as ResourceNode).context = {
             ...pageContext.current,
@@ -267,6 +284,8 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                     if (id && map.getLayer(id)) map.removeLayer(id)
                     pageContext.current.perPatchCLGId = null
 
+                    pageContext.current.benchmarkCleanup?.()
+                    pageContext.current.benchmarkCleanup = null
                     pageContext.current.topologyLayer = null
                     pageContext.current.patchCore = null
                     layerOrderCoordinator.unregister(node.nodeInfo)

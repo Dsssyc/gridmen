@@ -13,3 +13,7 @@ resource
 
 node_modules/
 .worktrees/
+
+*.docx
+output/
+paper/
