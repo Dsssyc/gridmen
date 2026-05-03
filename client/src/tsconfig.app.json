@@ -29,5 +29,6 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src", "src/resource/iconRegistry.ts"]
+  "include": ["src", "src/resource/iconRegistry.ts"],
+  "exclude": ["src/threejs"]
 }

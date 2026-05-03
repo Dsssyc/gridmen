@@ -49,6 +49,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { ensureTopologyLayerInitialized, getOrCreatePerPatchTopology } from '@/views/mapView/topology/topologyLayerManager'
 import { layerOrderCoordinator } from '@/views/mapView/layerOrderCoordinator'
 import { startPatchRenderBenchmark } from './benchmark/renderBenchmarkRunner'
+import { startPatchEditLatencyBenchmark } from './benchmark/editLatencyBenchmarkRunner'
 
 interface PatchEditProps {
     node: IResourceNode
@@ -225,13 +226,19 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
         pageContext.current.benchmarkCleanup?.()
         pageContext.current.benchmarkCleanup = null
-        const benchmarkHandle = startPatchRenderBenchmark({
+        const renderBenchmarkHandle = startPatchRenderBenchmark({
             map,
             topologyLayer: gridLayer,
             patchId: node.nodeInfo,
             cellCount: () => patchCore.cellNum,
         })
-        pageContext.current.benchmarkCleanup = benchmarkHandle?.stop ?? null;
+        const editLatencyBenchmarkHandle = startPatchEditLatencyBenchmark({
+            map,
+            topologyLayer: gridLayer,
+            patchId: node.nodeInfo,
+            cellCount: () => patchCore.cellNum,
+        })
+        pageContext.current.benchmarkCleanup = editLatencyBenchmarkHandle?.stop ?? renderBenchmarkHandle?.stop ?? null;
 
         // store.get<{ on: Function, off: Function }>('isLoading')!.off()
         const boundsOn4326 = await convertBoundsCoordinates(pageContext.current.patch!.bounds, pageContext.current.patch!.epsg, 4326)
