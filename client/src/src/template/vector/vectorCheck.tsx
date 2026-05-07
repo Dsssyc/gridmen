@@ -101,8 +101,8 @@ export default function VectorCheck({ node, context }: VectorCheckProps) {
         const fcCopy: GeoJSON.FeatureCollection = JSON.parse(JSON.stringify(pageContext.current.drawVector!))
         tagVectorColor(fcCopy, hex)
         const handle = addVectorDisplay(map, node.nodeInfo, fcCopy)
-        pageContext.current.displayHandle = handle
-        layerOrderCoordinator.register(node.nodeInfo, handle.mapboxLayerIds)
+        pageContext.current.displayHandle = handle;
+        layerOrderCoordinator.register(node.nodeInfo, handle.mapboxLayerIds);
 
         (node as ResourceNode).context = {
             ...((node as ResourceNode).context ?? {}),
