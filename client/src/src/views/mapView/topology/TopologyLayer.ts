@@ -1,4 +1,4 @@
-import { Map } from 'mapbox-gl'
+import { Map as MapboxMap } from 'mapbox-gl'
 import { mat4 } from 'gl-matrix'
 
 import '@/App.css'
@@ -11,12 +11,23 @@ import HitBuffer from './hitBuffer'
 import CustomLayerGroup from './customLayerGroup'
 import { NHCustomLayerInterface } from './interfaces'
 import store from '@/store/store'
+import type { TopologyRenderSample } from './renderSample'
 
 let CHECK_ON_EVENT: Function
 let CHECK_OFF_EVENT: Function
 
 const LEVEL_PALETTE_LENGTH = 256 // Patch level range is 0 - 255 (UInt8)
 const DEFAULT_MAX_CELL_NUM = 4096 * 4096 // 16M cells, a size that most GPUs can handle
+const BENCHMARK_RENDER_FRAME_TIMEOUT_MS = 10000
+type RenderSampleListener = (sample: TopologyRenderSample) => void
+type BenchmarkEditOperation = 'pick' | 'subdivide' | 'merge' | 'delete' | 'recover'
+interface BenchmarkEditOperationResult {
+    operation: BenchmarkEditOperation
+    cellCountBefore: number
+    cellCountAfter: number
+    selectedCellCount: number
+    target?: Record<string, unknown>
+}
 
 export default class TopologyLayer implements NHCustomLayerInterface {
     // Layer-related ///////////////////////////////////////////////////////
@@ -93,8 +104,11 @@ export default class TopologyLayer implements NHCustomLayerInterface {
     private _boxPickingFBO: WebGLFramebuffer = 0
     private _boxPickingTexture: WebGLTexture = 0
     private _boxPickingRBO: WebGLRenderbuffer = 0
+    private _renderSampleListeners = new Set<RenderSampleListener>()
+    private _benchmarkSubdivideChildGroups = new Map<number, number[]>()
+    private _benchmarkDeletedGroups = new Map<number, number[]>()
 
-    constructor(public map: Map) {
+    constructor(public map: MapboxMap) {
         // Set WebGL2 context
         this._gl = this.map.painter.context.gl
 
@@ -183,6 +197,40 @@ export default class TopologyLayer implements NHCustomLayerInterface {
         return true
     }
 
+    addRenderSampleListener(listener: RenderSampleListener): () => void {
+        this._renderSampleListeners.add(listener)
+        return () => this.removeRenderSampleListener(listener)
+    }
+
+    removeRenderSampleListener(listener: RenderSampleListener): void {
+        this._renderSampleListeners.delete(listener)
+    }
+
+    waitForBenchmarkRenderFrame(timeoutMs?: number): Promise<TopologyRenderSample> {
+        return this._waitForBenchmarkRenderFrame(timeoutMs)
+    }
+
+    async runBenchmarkEditOperation(operation: BenchmarkEditOperation, trialIndex: number): Promise<BenchmarkEditOperationResult> {
+        if (!this.isReady) {
+            throw new Error('Topology layer is not ready')
+        }
+
+        switch (operation) {
+            case 'pick':
+                return this._runBenchmarkPick(trialIndex)
+            case 'subdivide':
+                return this._runBenchmarkSubdivide(trialIndex)
+            case 'merge':
+                return this._runBenchmarkMerge(trialIndex)
+            case 'delete':
+                return this._runBenchmarkDelete(trialIndex)
+            case 'recover':
+                return this._runBenchmarkRecover(trialIndex)
+            default:
+                throw new Error(`Unsupported benchmark operation: ${operation}`)
+        }
+    }
+
     set startCallback(func: Function) {
         this._startCallback = () => {
             func()
@@ -207,7 +255,7 @@ export default class TopologyLayer implements NHCustomLayerInterface {
 
     // Initialization //////////////////////////////////////////////////
 
-    async initialize(_: Map, gl: WebGL2RenderingContext) {
+    async initialize(_: MapboxMap, gl: WebGL2RenderingContext) {
         this._gl = gl
         this.initDOM()
         await this.initGPUResource()
@@ -748,22 +796,339 @@ export default class TopologyLayer implements NHCustomLayerInterface {
         store.get<{ on: Function; off: Function }>('isLoading')!.off()
     }
 
+    private async _runBenchmarkPick(trialIndex: number): Promise<BenchmarkEditOperationResult> {
+        const target = this._findBenchmarkStorageId(trialIndex, storageId => !this.patchCore.isDeleted(storageId))
+        if (target === null) throw new Error('No selectable benchmark target was found')
+
+        const cellCountBefore = this.patchCore.cellNum
+        this.executeClearSelection()
+        this._hit(target)
+
+        const sample = await this._waitForBenchmarkRenderFrame()
+        return {
+            operation: 'pick',
+            cellCountBefore,
+            cellCountAfter: sample.cellCount,
+            selectedCellCount: 1,
+            target: this._getBenchmarkTargetMetadata(target),
+        }
+    }
+
+    private async _runBenchmarkSubdivide(trialIndex: number): Promise<BenchmarkEditOperationResult> {
+        const target = this._findBenchmarkStorageId(
+            trialIndex,
+            storageId => {
+                const [level] = this.patchCore.getInfoByStorageId(storageId)
+                return level < this.patchCore.maxLevel && !this.patchCore.isDeleted(storageId)
+            },
+        )
+        if (target === null) throw new Error('No subdividable benchmark target was found')
+
+        const cellCountBefore = this.patchCore.cellNum
+        const targetMetadata = this._getBenchmarkTargetMetadata(target)
+        this.executeClearSelection()
+        const [level, globalId] = this.patchCore.getInfoByStorageId(target)
+        await this._benchmarkDeleteCellsLocally([target])
+        const childStorageIds = await this._benchmarkSubdivideCells({
+            levels: new Uint8Array([level]),
+            globalIds: new Uint32Array([globalId]),
+        })
+        this._benchmarkSubdivideChildGroups.set(trialIndex, childStorageIds)
+        const sample = await this._waitForBenchmarkRenderFrame()
+        this.executeClearSelection()
+
+        return {
+            operation: 'subdivide',
+            cellCountBefore,
+            cellCountAfter: sample.cellCount,
+            selectedCellCount: 1,
+            target: {
+                ...targetMetadata,
+                childStorageIds,
+            },
+        }
+    }
+
+    private async _runBenchmarkMerge(trialIndex: number): Promise<BenchmarkEditOperationResult> {
+        const childStorageIds = this._benchmarkSubdivideChildGroups.get(trialIndex) ?? []
+        const preferredStorageIds = childStorageIds.filter(storageId => storageId >= 0 && storageId < this.patchCore.cellNum && !this.patchCore.isDeleted(storageId))
+        const mergeableStorageIds = preferredStorageIds.length
+            ? preferredStorageIds
+            : this._findBenchmarkMergeGroup(trialIndex)
+        if (!mergeableStorageIds.length) throw new Error('No valid benchmark child group is available for merge')
+
+        const cellCountBefore = this.patchCore.cellNum
+        this.executeClearSelection()
+        const mergedStorageIds = await this._benchmarkMergeCells(mergeableStorageIds)
+        const sample = await this._waitForBenchmarkRenderFrame()
+        this.executeClearSelection()
+
+        return {
+            operation: 'merge',
+            cellCountBefore,
+            cellCountAfter: sample.cellCount,
+            selectedCellCount: mergeableStorageIds.length,
+            target: {
+                childStorageIds: mergeableStorageIds,
+                mergedStorageIds,
+            },
+        }
+    }
+
+    private async _runBenchmarkDelete(trialIndex: number): Promise<BenchmarkEditOperationResult> {
+        const target = this._findBenchmarkStorageId(trialIndex, storageId => !this.patchCore.isDeleted(storageId))
+        if (target === null) throw new Error('No deletable benchmark target was found')
+
+        const cellCountBefore = this.patchCore.cellNum
+        const targetMetadata = this._getBenchmarkTargetMetadata(target)
+        this.executeClearSelection()
+        await this._benchmarkMarkCellsAsDeleted([target])
+        const sample = await this._waitForBenchmarkRenderFrame()
+        this._benchmarkDeletedGroups.set(trialIndex, [target])
+
+        return {
+            operation: 'delete',
+            cellCountBefore,
+            cellCountAfter: sample.cellCount,
+            selectedCellCount: 1,
+            target: targetMetadata,
+        }
+    }
+
+    private async _runBenchmarkRecover(trialIndex: number): Promise<BenchmarkEditOperationResult> {
+        const deletedStorageIds = this._benchmarkDeletedGroups.get(trialIndex)?.filter(storageId => (
+            storageId >= 0 && storageId < this.patchCore.cellNum && this.patchCore.isDeleted(storageId)
+        ))
+        if (!deletedStorageIds?.length) {
+            throw new Error('No deleted benchmark target is available for recover')
+        }
+
+        const cellCountBefore = this.patchCore.cellNum
+        this.executeClearSelection()
+        await this._benchmarkRestoreCells(deletedStorageIds)
+        const sample = await this._waitForBenchmarkRenderFrame()
+
+        return {
+            operation: 'recover',
+            cellCountBefore,
+            cellCountAfter: sample.cellCount,
+            selectedCellCount: deletedStorageIds.length,
+            target: { storageIds: deletedStorageIds },
+        }
+    }
+
+    private _benchmarkDeleteCellsLocally(storageIds: number[]): Promise<void> {
+        return new Promise(resolve => {
+            this.patchCore.deleteCellsLocally(storageIds, (infos: [sourceStorageIds: number[], targetStorageIds: number[]]) => {
+                for (let i = 0; i < infos[0].length; i++) {
+                    this.copyGPUCell(infos[0][i], infos[1][i])
+                }
+                this.map.triggerRepaint()
+                resolve()
+            })
+        })
+    }
+
+    private _benchmarkSubdivideCells(subdivideInfos: { levels: Uint8Array, globalIds: Uint32Array }): Promise<number[]> {
+        return new Promise(resolve => {
+            this.patchCore.subdivideCells(subdivideInfos, (renderInfos: [number, Uint8Array, Float32Array, Float32Array, Uint8Array]) => {
+                this.updateGPUCells(renderInfos)
+                const [fromStorageId, levels] = renderInfos
+                const storageIds = Array.from(
+                    { length: levels.length },
+                    (_, i) => fromStorageId + i
+                )
+                this._hit(storageIds)
+                resolve(storageIds)
+            })
+        })
+    }
+
+    private _benchmarkMergeCells(mergeableStorageIds: number[]): Promise<number[]> {
+        return new Promise((resolve, reject) => {
+            this.patchCore.mergeCells(mergeableStorageIds, (info: { childStorageIds: number[], parentInfo: MultiCellBaseInfo }) => {
+                if (info.parentInfo.levels.length === 0) {
+                    reject(new Error('Selected benchmark cells are not mergeable'))
+                    return
+                }
+
+                this.patchCore.deleteCellsLocally(info.childStorageIds, (infos: [sourceStorageIds: number[], targetStorageIds: number[]]) => {
+                    for (let i = 0; i < infos[0].length; i++) {
+                        this.copyGPUCell(infos[0][i], infos[1][i])
+                    }
+
+                    const fromStorageId = this.patchCore.cellNum
+                    this.patchCore.updateMultiCellRenderInfo(info.parentInfo, (renderInfo: [number, Uint8Array, Float32Array, Float32Array, Uint8Array]) => {
+                        this.updateGPUCells(renderInfo)
+                        const [, levels] = renderInfo
+                        const storageIds = Array.from(
+                            { length: levels.length },
+                            (_, i) => fromStorageId + i
+                        )
+                        this._hit(storageIds)
+                        resolve(storageIds)
+                    })
+                })
+            })
+        })
+    }
+
+    private _benchmarkMarkCellsAsDeleted(storageIds: number[]): Promise<void> {
+        return new Promise(resolve => {
+            this.patchCore.markCellsAsDeleted(storageIds, () => {
+                const gl = this._gl
+                gl.bindBuffer(gl.ARRAY_BUFFER, this._signalBuffer)
+                storageIds.forEach(storageId => {
+                    gl.bufferSubData(gl.ARRAY_BUFFER, this.maxCellNum + storageId, this.deletedFlag, 0)
+                })
+                gl.bindBuffer(gl.ARRAY_BUFFER, null)
+                this._hit(storageIds)
+                resolve()
+            })
+        })
+    }
+
+    private _benchmarkRestoreCells(storageIds: number[]): Promise<void> {
+        return new Promise(resolve => {
+            this.patchCore.restoreCells(storageIds, () => {
+                const gl = this._gl
+                gl.bindBuffer(gl.ARRAY_BUFFER, this._signalBuffer)
+                storageIds.forEach(storageId => {
+                    gl.bufferSubData(gl.ARRAY_BUFFER, this.maxCellNum + storageId, this.undeletedFlag, 0)
+                })
+                gl.bindBuffer(gl.ARRAY_BUFFER, null)
+                this._hit(storageIds)
+                resolve()
+            })
+        })
+    }
+
+    private _findBenchmarkMergeGroup(trialIndex: number): number[] {
+        const cellNum = this.patchCore.cellNum
+        const start = Math.abs(trialIndex * 7919) % Math.max(cellNum, 1)
+
+        for (let offset = 0; offset < cellNum; offset += 1) {
+            const storageId = (start + offset) % cellNum
+            if (this.patchCore.isDeleted(storageId)) continue
+
+            const [level, globalId] = this.patchCore.getInfoByStorageId(storageId)
+            if (level <= 0) continue
+
+            const siblingStorageIds = this._findSiblingStorageIds(level, globalId)
+            if (siblingStorageIds.length > 0) return siblingStorageIds
+        }
+
+        return []
+    }
+
+    private _findSiblingStorageIds(level: number, globalId: number): number[] {
+        const rule = this.patchCore.context.rules[level - 1]
+        const levelInfo = this.patchCore.levelInfos[level]
+        const parentInfo = this.patchCore.levelInfos[level - 1]
+        if (!rule || !levelInfo || !parentInfo) return []
+
+        const [subWidth, subHeight] = rule
+        const globalU = globalId % levelInfo.width
+        const globalV = Math.floor(globalId / levelInfo.width)
+        const parentU = Math.floor(globalU / subWidth)
+        const parentV = Math.floor(globalV / subHeight)
+        const parentGlobalId = parentV * parentInfo.width + parentU
+        const siblingGlobalIds = this.patchCore.getChildren(level - 1, parentGlobalId)
+        if (!siblingGlobalIds?.length) return []
+
+        const storageByGlobalId = new Map<number, number>()
+        for (let storageId = 0; storageId < this.patchCore.cellNum; storageId += 1) {
+            if (this.patchCore.isDeleted(storageId)) continue
+
+            const [candidateLevel, candidateGlobalId] = this.patchCore.getInfoByStorageId(storageId)
+            if (candidateLevel === level) {
+                storageByGlobalId.set(candidateGlobalId, storageId)
+            }
+        }
+
+        const siblingStorageIds = siblingGlobalIds
+            .map(siblingGlobalId => storageByGlobalId.get(siblingGlobalId))
+            .filter((storageId): storageId is number => storageId !== undefined)
+
+        return siblingStorageIds.length === siblingGlobalIds.length ? siblingStorageIds : []
+    }
+
+    private _findBenchmarkStorageId(trialIndex: number, predicate: (storageId: number) => boolean): number | null {
+        const cellNum = this.patchCore.cellNum
+        if (cellNum <= 0) return null
+
+        const start = Math.abs(trialIndex * 7919) % cellNum
+        for (let offset = 0; offset < cellNum; offset += 1) {
+            const storageId = (start + offset) % cellNum
+            if (predicate(storageId)) return storageId
+        }
+
+        return null
+    }
+
+    private _getBenchmarkTargetMetadata(storageId: number): Record<string, unknown> {
+        const [level, globalId] = this.patchCore.getInfoByStorageId(storageId)
+        return {
+            storageId,
+            level,
+            globalId,
+            deleted: this.patchCore.isDeleted(storageId),
+        }
+    }
+
+    private _waitForBenchmarkRenderFrame(timeoutMs = BENCHMARK_RENDER_FRAME_TIMEOUT_MS): Promise<TopologyRenderSample> {
+        return new Promise((resolve, reject) => {
+            let timeoutId = 0
+            const unsubscribe = this.addRenderSampleListener(sample => {
+                if (timeoutId) window.clearTimeout(timeoutId)
+                unsubscribe()
+                resolve(sample)
+            })
+            if (timeoutMs > 0) {
+                timeoutId = window.setTimeout(() => {
+                    unsubscribe()
+                    reject(new Error('Timed out waiting for benchmark render frame'))
+                }, timeoutMs)
+            }
+            this.map.triggerRepaint()
+        })
+    }
+
     // Rendering ///////////////////////////////////////////////////
 
     render(gl: WebGL2RenderingContext, matrix: number[]) {
         // Skip if not ready or not visible
         if (!this.isReady || !this.visible) return
 
+        const renderStartMs = performance.now()
+        let passCount = 0
+
         // Tick render
         if (!this.isTransparent) {
             // Mesh Pass
             this.drawCellMeshes()
+            passCount += 1
             // Line Pass
             this.drawCellLines()
+            passCount += 1
         }
 
         // Error check
         gll.errorCheck(gl)
+
+        const renderEndMs = performance.now()
+        this.emitRenderSample({
+            timestampMs: renderEndMs,
+            renderDurationMs: renderEndMs - renderStartMs,
+            cellCount: this.patchCore.cellNum,
+            layerId: this.id,
+            passCount,
+            visible: this.visible,
+        })
+    }
+
+    private emitRenderSample(sample: TopologyRenderSample): void {
+        this._renderSampleListeners.forEach(listener => listener(sample))
     }
 
     drawCellMeshes() {
@@ -1065,7 +1430,7 @@ export default class TopologyLayer implements NHCustomLayerInterface {
         this.map.triggerRepaint()
     }
 
-    remove(_: Map, gl: WebGL2RenderingContext) {
+    remove(_: MapboxMap, gl: WebGL2RenderingContext) {
         this.removeResource();
 
         this._removeGPUResource(gl);

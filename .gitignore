@@ -13,3 +13,9 @@ resource
 
 node_modules/
 .worktrees/
+__pycache__/
+*.py[cod]
+
+*.docx
+output/
+paper/
