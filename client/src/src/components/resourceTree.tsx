@@ -284,16 +284,10 @@ const NodeRenderer = ({
     const { setSelectedNodeKey } = useSelectedNodeStore()
 
     const nodeRef = useRef<HTMLDivElement>(null)
-    const clickTimeoutRef = useRef<NodeJS.Timeout | null>(null)
     const [isDragOver, setIsDragOver] = useState(false)
 
-    const handleClickNode = useCallback((e: React.MouseEvent) => {
+    const handleClickNode = useCallback(() => {
         if (!isFolder && !node.isTemp) return
-        if (clickTimeoutRef.current) {
-            clearTimeout(clickTimeoutRef.current)
-            clickTimeoutRef.current = null
-            return
-        }
 
         if (node.isTemp) {
             useToolPanelStore.getState().setActiveTab('create')
@@ -302,35 +296,8 @@ const NodeRenderer = ({
         // Always set selected key so UI highlights the clicked node
         setSelectedNodeKey(node.key)
 
-        if (isFolder) {
-            // For folders, delay click action to allow double-click detection
-            clickTimeoutRef.current = setTimeout(() => {
-                (node.tree as ResourceTree).clickNode(node)
-                clickTimeoutRef.current = null
-            }, 150)
-        } else {
-            // For files, immediately notify tree of click (select)
-            ; (node.tree as ResourceTree).clickNode(node)
-        }
+        ; (node.tree as ResourceTree).clickNode(node)
     }, [node, isFolder, setSelectedNodeKey])
-
-
-    // const handleDoubleClickNode = useCallback((e: React.MouseEvent) => {
-    //     e.stopPropagation()
-
-    //     // Clear single click timeout
-    //     if (clickTimeoutRef.current) {
-    //         clearTimeout(clickTimeoutRef.current)
-    //         clickTimeoutRef.current = null
-    //     }
-
-    //     // Prevent text selection
-    //     if (window.getSelection) {
-    //         window.getSelection()?.removeAllRanges()
-    //     }
-
-    //     (node.tree as ResourceTree).doubleClickNode(node)
-    // }, [node])
 
     const handleNodeMenu = useCallback((node: IResourceNode, menuItem: any) => {
         if (menuItem === 'New Resource' || menuItem === 'New Folder') {
@@ -481,14 +448,6 @@ const NodeRenderer = ({
             })
         }
     }, [isSelected, triggerFocus])
-
-    useEffect(() => {
-        return () => {
-            if (clickTimeoutRef.current) {
-                clearTimeout(clickTimeoutRef.current)
-            }
-        }
-    }, [])
 
     return (
         <div>
