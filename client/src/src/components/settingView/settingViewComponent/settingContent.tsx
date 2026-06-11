@@ -6,7 +6,14 @@ import { DEFAULT_LEAD_IP, useSettingStore } from "@/store/storeSet"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { MapPin } from "lucide-react"
+import { Eye, EyeOff, MapPin } from "lucide-react"
+import {
+    getMapboxAccessToken,
+    isMapboxSecretToken,
+    mapboxPublicTokenPrefix,
+    mapboxTokenEnvName,
+    normalizeMapboxPublicToken,
+} from "@/utils/mapboxToken"
 
 interface SettingContentProps {
     activeCategory: string
@@ -17,15 +24,18 @@ export default function SettingContent({ activeCategory }: SettingContentProps) 
     const {
         publicIP: leadIP,
         highSpeedMode,
+        mapboxAccessToken: savedMapboxAccessToken,
         mapInitialLongitude,
         mapInitialLatitude,
         setHighSpeedMode,
         setLeadIP,
+        setMapboxAccessToken,
         setMapInitialCenter,
         setMapInitialLongitude,
         setMapInitialLatitude,
     } = useSettingStore()
 
+    const [showMapboxAccessToken, setShowMapboxAccessToken] = useState(false)
     const [lngInput, setLngInput] = useState(() => String(mapInitialLongitude))
     const [latInput, setLatInput] = useState(() => String(mapInitialLatitude))
     const [pickPopoverOpen, setPickPopoverOpen] = useState(false)
@@ -33,6 +43,18 @@ export default function SettingContent({ activeCategory }: SettingContentProps) 
     const mapWrapperRef = useRef<HTMLDivElement>(null)
     const pickMapRef = useRef<mapboxgl.Map | null>(null)
     const pickMarkerRef = useRef<mapboxgl.Marker | null>(null)
+    const mapboxAccessToken = getMapboxAccessToken(savedMapboxAccessToken)
+    const trimmedMapboxAccessToken = savedMapboxAccessToken.trim()
+    const mapboxTokenError = (() => {
+        if (!trimmedMapboxAccessToken) return null
+        if (isMapboxSecretToken(trimmedMapboxAccessToken)) {
+            return "Secret tokens cannot be used in the desktop client. Use a public token that starts with pk."
+        }
+        if (!normalizeMapboxPublicToken(trimmedMapboxAccessToken)) {
+            return "Use a Mapbox public token that starts with pk."
+        }
+        return null
+    })()
 
     useEffect(() => {
         setLngInput(String(mapInitialLongitude))
@@ -77,7 +99,14 @@ export default function SettingContent({ activeCategory }: SettingContentProps) 
             return
         }
 
-        mapboxgl.accessToken = import.meta.env.VITE_MAP_TOKEN
+        if (!mapboxAccessToken) {
+            pickMapRef.current?.remove()
+            pickMapRef.current = null
+            pickMarkerRef.current = null
+            return
+        }
+
+        mapboxgl.accessToken = mapboxAccessToken
 
         let disposed = false
         let rafId = 0
@@ -145,7 +174,7 @@ export default function SettingContent({ activeCategory }: SettingContentProps) 
             if (rafId) cancelAnimationFrame(rafId)
             cleanup?.()
         }
-    }, [pickPopoverOpen, mapInitialLongitude, mapInitialLatitude, setMapInitialCenter])
+    }, [pickPopoverOpen, mapInitialLongitude, mapInitialLatitude, setMapInitialCenter, mapboxAccessToken])
 
     const renderPublicSetting = () => (
         <div className="space-y-0">
@@ -180,6 +209,34 @@ export default function SettingContent({ activeCategory }: SettingContentProps) 
 
     const renderMapViewGeneralSetting = () => (
         <div className="space-y-0">
+            <SettingItem title="Mapbox Token" description="Public Mapbox token used by Map view and the mini map picker.">
+                <div className="w-[360px] space-y-1">
+                    <div className="flex items-center gap-1">
+                        <Input
+                            value={savedMapboxAccessToken}
+                            type={showMapboxAccessToken ? "text" : "password"}
+                            className="h-7 bg-gray-700 border-gray-600 text-white"
+                            onChange={(e) => setMapboxAccessToken(e.target.value.trim())}
+                            placeholder={`${mapboxPublicTokenPrefix}...`}
+                            aria-invalid={Boolean(mapboxTokenError)}
+                        />
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-gray-300 hover:bg-gray-700 hover:text-white"
+                            onClick={() => setShowMapboxAccessToken((value) => !value)}
+                            title={showMapboxAccessToken ? "Hide token" : "Show token"}
+                            aria-label={showMapboxAccessToken ? "Hide Mapbox token" : "Show Mapbox token"}
+                        >
+                            {showMapboxAccessToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </Button>
+                    </div>
+                    <div className={mapboxTokenError ? "text-xs text-red-300" : "text-xs text-gray-500"}>
+                        {mapboxTokenError ?? "Stored locally in this app. Use only a public pk token."}
+                    </div>
+                </div>
+            </SettingItem>
             <SettingItem title="Map View: Center" description="Set initial map center (WGS84).">
                 <div className="flex items-center gap-2">
                     <div className="grid grid-cols-[80px_144px] items-center gap-y-2">
@@ -221,9 +278,15 @@ export default function SettingContent({ activeCategory }: SettingContentProps) 
                             <div className="space-y-2">
                                 <div className="text-sm font-semibold">Pick Map Center</div>
                                 <div className="text-xs text-gray-400">Click on the mini map to set Longitude/Latitude.</div>
-                                <div className="w-full h-[360px] rounded-md overflow-hidden border border-gray-300 shadow-md">
-                                    <div className="w-full h-[400px] cursor-crosshair hide-mapbox-branding" ref={mapWrapperRef} />
-                                </div>
+                                {mapboxAccessToken ? (
+                                    <div className="w-full h-[360px] rounded-md overflow-hidden border border-gray-300 shadow-md">
+                                        <div className="w-full h-[400px] cursor-crosshair hide-mapbox-branding" ref={mapWrapperRef} />
+                                    </div>
+                                ) : (
+                                    <div className="flex h-[160px] items-center justify-center rounded-md border border-gray-300 bg-gray-900 px-4 text-center text-xs leading-5 text-gray-300">
+                                        Set <span className="mx-1 font-mono text-gray-100">{mapboxTokenEnvName}</span> in <span className="ml-1 font-mono text-gray-100">client/src/.env</span> to use the mini map.
+                                    </div>
+                                )}
                                 <div className="text-xs text-gray-400">Current: {mapInitialLongitude.toFixed(6)}, {mapInitialLatitude.toFixed(6)}</div>
                             </div>
                         </PopoverContent>

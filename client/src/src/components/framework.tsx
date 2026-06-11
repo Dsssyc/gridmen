@@ -275,18 +275,23 @@ function FrameworkShell() {
         return inPublic
     }, [privateTree, publicTree])
 
+    const openSettings = useCallback(() => {
+        setActiveIconID('settings')
+        navigate('/framework')
+    }, [navigate])
+
     const renderActiveView = () => {
         const currentTemplateName = getCurrentTemplateName()
         const selectedNode = privateTree?.selectedNode || publicTree?.selectedNode
         switch (activeIconID) {
             case 'map-view':
-                return <MapViewComponent templateName={currentTemplateName} selectedNode={selectedNode} getResourceNodeByKey={getResourceNodeByKey} />
+                return <MapViewComponent templateName={currentTemplateName} selectedNode={selectedNode} getResourceNodeByKey={getResourceNodeByKey} onOpenSettings={openSettings} />
             case 'table-view':
                 return <TableViewComponent />
             case 'settings':
                 return <SettingView />
             default:
-                return <MapViewComponent templateName={currentTemplateName} selectedNode={selectedNode} getResourceNodeByKey={getResourceNodeByKey} />
+                return <MapViewComponent templateName={currentTemplateName} selectedNode={selectedNode} getResourceNodeByKey={getResourceNodeByKey} onOpenSettings={openSettings} />
         }
     }
 
