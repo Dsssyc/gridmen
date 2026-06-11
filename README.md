@@ -86,7 +86,13 @@ npm run setup
 
 #### Environment Configuration
 
-Create a `.env` file in `client/src/` with the following content:
+Copy the renderer environment template:
+
+```bash
+cp client/src/.env.example client/src/.env
+```
+
+Then edit `client/src/.env`:
 
 ```env
 # Replace with your local API URL, e.g., http://localhost:8000
@@ -99,7 +105,7 @@ VITE_REMOTE_API_URL=http://localhost:8000
 VITE_MAP_TOKEN=your_mapbox_token_here
 ```
 
-> **Note**: Get your Mapbox token from [Mapbox Account](https://account.mapbox.com/access-tokens/)
+> **Note**: Get your Mapbox token from [Mapbox Account](https://account.mapbox.com/access-tokens/). Map view opens without crashing when the token is missing, but the map canvas needs a public `pk...` token to load Mapbox styles. The `.env` value seeds the default token; it can also be edited later in Settings -> Map View -> General.
 
 ### Running the Application
 

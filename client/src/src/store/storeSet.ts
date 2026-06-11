@@ -2,21 +2,25 @@ import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import { Layer, LayerGroupStore, LayerStore, SelectedNodeStore, SettingsProps, TempNewNodeProps, ToolPanelStore } from "./storeTypes"
 import { ResourceNode } from '@/template/scene/scene'
+import { getEnvMapboxAccessToken } from '@/utils/mapboxToken'
 
 export const DEFAULT_LEAD_IP = 'http://127.0.0.1:8001'
 
 export const DEFAULT_MAP_INITIAL_LONGITUDE = 114.051537
 export const DEFAULT_MAP_INITIAL_LATITUDE = 22.446937
+export const DEFAULT_MAPBOX_ACCESS_TOKEN = getEnvMapboxAccessToken() ?? ''
 
 export const useSettingStore = create<SettingsProps>()(
     persist(
         (set) => ({
             publicIP: DEFAULT_LEAD_IP,
             highSpeedMode: false,
+            mapboxAccessToken: DEFAULT_MAPBOX_ACCESS_TOKEN,
             mapInitialLongitude: DEFAULT_MAP_INITIAL_LONGITUDE,
             mapInitialLatitude: DEFAULT_MAP_INITIAL_LATITUDE,
             setLeadIP: (leadIP: string) => set({ publicIP: leadIP }),
             setHighSpeedMode: (highSpeedMode: boolean) => set({ highSpeedMode }),
+            setMapboxAccessToken: (mapboxAccessToken: string) => set({ mapboxAccessToken }),
             setMapInitialLongitude: (lng: number) => set({ mapInitialLongitude: lng }),
             setMapInitialLatitude: (lat: number) => set({ mapInitialLatitude: lat }),
             setMapInitialCenter: (lng: number, lat: number) => set({ mapInitialLongitude: lng, mapInitialLatitude: lat }),
@@ -27,6 +31,7 @@ export const useSettingStore = create<SettingsProps>()(
             partialize: (state) => ({
                 publicIP: state.publicIP,
                 highSpeedMode: state.highSpeedMode,
+                mapboxAccessToken: state.mapboxAccessToken,
                 mapInitialLongitude: state.mapInitialLongitude,
                 mapInitialLatitude: state.mapInitialLatitude,
             }),
