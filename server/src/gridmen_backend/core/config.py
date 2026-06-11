@@ -1,5 +1,8 @@
 import os
 from pathlib import Path
+from typing import Any
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 ROOT_DIR = Path(__file__).parent.parent.parent.parent
@@ -33,6 +36,17 @@ class Settings(BaseSettings):
     CORS_HEADERS: list[str] = ['*']
     CORS_METHODS: list[str] = ['*']
     CORS_CREDENTIALS: bool = True
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug_mode(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"release", "prod", "production"}:
+                return False
+            if normalized in {"debug", "dev", "development"}:
+                return True
+        return value
 
     def inject_env(self, keys: list[str]):
         """Inject specific settings into environment variables"""
