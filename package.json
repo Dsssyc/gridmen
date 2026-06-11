@@ -10,9 +10,6 @@
     "dev:web": "cd client/src && npm run dev",
     "start:server": "cd server && uv run main.py"
   },
-  "devDependencies": {
-    "concurrently": "^10.0.3"
-  },
   "author": "",
   "license": "ISC"
 }

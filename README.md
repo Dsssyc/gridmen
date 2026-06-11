@@ -19,7 +19,7 @@ High-level structure (monorepo):
 
 ```text
 .
-├─ package.json                # Workspace orchestration (concurrently)
+├─ package.json                # Workspace orchestration scripts
 ├─ client/                     # Electron desktop shell
 │  ├─ package.json             # Electron dependencies + build script
 │  ├─ electron/                # Electron main/preload process (TypeScript)
@@ -115,10 +115,12 @@ From the repository root:
 npm start
 ```
 
-This command will concurrently:
+This command starts and supervises:
 - Start Electron desktop shell (`client/`)
 - Launch Vite dev server (`client/src/`) on `http://127.0.0.1:5173`
 - Run the FastAPI backend (`server/`) on `http://localhost:8000`
+
+Press `Ctrl+C` once in the root terminal to shut down all three processes.
 
 ### Individual Development Servers
 
