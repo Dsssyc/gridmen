@@ -58,7 +58,7 @@ export default class HelloRenderer {
     private eatEasterEgg: boolean = false
     private animation: number | null = null
     private mouseEffectDuration: number = 10000
-    private stopTimeout: NodeJS.Timeout | null = null
+    private stopTimeout: ReturnType<typeof setTimeout> | null = null
     private renderControl: { start: () => void, stop: () => void }
 
     constructor(canvas: HTMLCanvasElement) {

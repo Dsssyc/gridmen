@@ -520,7 +520,7 @@ requires-dist = [
     { name = "gdal", marker = "sys_platform == 'win32'", index = "https://nathanjmcdougall.github.io/geospatial-wheels-index/" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "pandas", specifier = ">=2.3.3" },
-    { name = "py-noodle", editable = "py-noodle" },
+    { name = "py-noodle", specifier = "==0.1.2" },
     { name = "pyarrow", specifier = ">=22.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
@@ -918,25 +918,18 @@ wheels = [
 
 [[package]]
 name = "py-noodle"
-version = "0.1.1"
-source = { editable = "py-noodle" }
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "c-two" },
     { name = "click" },
     { name = "fastapi" },
     { name = "pyyaml" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "c-two", specifier = "==0.2.6" },
-    { name = "click", specifier = ">=8.3.1" },
-    { name = "fastapi", specifier = ">=0.116.1" },
-    { name = "pyyaml", specifier = ">=6.0.2" },
+sdist = { url = "https://files.pythonhosted.org/packages/70/3d/182ca0dd08ed8dbdcef5ec4752cddb030ccf03fe7a0c424bd65020afc0f0/py_noodle-0.1.2.tar.gz", hash = "sha256:34c5e0d85af9c611e30ce83b087affffd25f32296f47c7b8246e7e9036a71d80", size = 20445, upload-time = "2026-06-11T13:21:13.544Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/09/e5/b86246b4454a2c8c3f0e56415469c914c60601f14fe9fc8f1aba1d167a52/py_noodle-0.1.2-py3-none-any.whl", hash = "sha256:f3ad59db063b3eaa070faab83fd83e10eff34e7272cbdc83b78784b12e724632", size = 26990, upload-time = "2026-06-11T13:21:12.224Z" },
 ]
-
-[package.metadata.requires-dev]
-dev = [{ name = "py-noodle", editable = "py-noodle" }]
 
 [[package]]
 name = "pyarrow"

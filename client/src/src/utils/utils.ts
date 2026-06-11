@@ -352,7 +352,7 @@ export const debounce = <F extends (...args: any[]) => any>(
     func: F,
     delay: number
 ): (...args: Parameters<F>) => Promise<ReturnType<F>> => {
-    let timeoutId: NodeJS.Timeout | null = null
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
 
     return (...args: Parameters<F>) => {
         if (timeoutId) {
