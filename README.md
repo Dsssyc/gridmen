@@ -1,13 +1,13 @@
 # Gridmen
 
 <p align="center">
-  <a href="https://www.electronjs.org/"><img src="https://img.shields.io/badge/Electron-36.2.1-47848F?logo=electron&logoColor=white" alt="Electron 36.2.1"></a>
+  <a href="https://www.electronjs.org/"><img src="https://img.shields.io/badge/Electron-42.4.0-47848F?logo=electron&logoColor=white" alt="Electron 42.4.0"></a>
   <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19.1.0-61DAFB?logo=react&logoColor=white" alt="React 19.1.0"></a>
-  <a href="https://vitejs.dev/"><img src="https://img.shields.io/badge/Vite-7.0.0-646CFF?logo=vite&logoColor=white" alt="Vite 7.0.0"></a>
+  <a href="https://vitejs.dev/"><img src="https://img.shields.io/badge/Vite-7.3.5-646CFF?logo=vite&logoColor=white" alt="Vite 7.3.5"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.8%2F5.9-3178C6?logo=typescript&logoColor=white" alt="TypeScript 5.8/5.9"></a>
   <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind%20CSS-4.1.11-06B6D4?logo=tailwindcss&logoColor=white" alt="Tailwind CSS 4.1.11"></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-0.116.1-009688?logo=fastapi&logoColor=white" alt="FastAPI 0.116.1"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+"></a>
 </p>
 
 Gridmen is a desktop + web GIS-style grid editing and visualization workspace.
@@ -29,8 +29,8 @@ High-level structure (monorepo):
 │     └─ src/                  # React app source (components/core/store/views/...)
 ├─ server/                     # Python backend project (uv + FastAPI)
 │  ├─ pyproject.toml           # Python deps/constraints (incl. GIS stack)
-│  ├─ main.py                  # Uvicorn entrypoint
-│  └─ py-noodle/               # Local editable dependency used by backend
+│  ├─ uv.lock                  # Locked Python dependency resolution
+│  └─ main.py                  # Uvicorn entrypoint
 ├─ src/                        # Backend source package (gridmen_backend)
 ├─ templates/                  # Frontend build output target (generated)
 ├─ resource/                   # Example datasets / resources
@@ -65,28 +65,26 @@ For full dependency lists, see `client/package.json`, `client/src/package.json`,
 ### Prerequisites
 
 - **Node.js** (v18 or higher recommended)
-- **Python** (3.12 or higher)
+- **Python** (3.10 or higher)
 - **uv** (Python package manager) - [Install uv](https://github.com/astral-sh/uv)
 
 ### Installation
 
-#### 1. Frontend Dependencies
-
-Install Electron dependencies:
+Check the local toolchain and native GIS linkage:
 
 ```bash
-cd ./client
-npm install
+npm run doctor
 ```
 
-Install renderer (React/Vite) dependencies:
+Install all JavaScript and Python dependencies:
 
 ```bash
-cd ./client/src
-npm install
+npm run setup
 ```
 
-#### 2. Environment Configuration
+`npm run setup` installs the workspace, Electron shell, Electron runtime, React/Vite renderer, and backend Python dependencies. It also runs `uv sync` in `server/`.
+
+#### Environment Configuration
 
 Create a `.env` file in `client/src/` with the following content:
 
@@ -102,20 +100,6 @@ VITE_MAP_TOKEN=your_mapbox_token_here
 ```
 
 > **Note**: Get your Mapbox token from [Mapbox Account](https://account.mapbox.com/access-tokens/)
-
-#### 3. Backend Dependencies
-
-Navigate to the server directory and install Python dependencies:
-
-```bash
-cd server
-uv run main.py
-```
-
-This will automatically:
-- Create a virtual environment in `.venv/`
-- Install all dependencies listed in `pyproject.toml`
-- Start the FastAPI server on `http://localhost:8000`
 
 ### Running the Application
 
