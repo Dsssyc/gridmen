@@ -16,6 +16,16 @@ import { IResourceNode } from '@/template/scene/iscene'
 import { layerOrderCoordinator } from './layerOrderCoordinator'
 import { calculateRectangleCoordinates, debounce } from '@/utils/utils'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
+import { Button } from '@/components/ui/button'
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog'
+import { getMapboxAccessToken, mapboxTokenEnvName } from '@/utils/mapboxToken'
 
 const initialZoom = 11
 const maxZoom = 22
@@ -25,6 +35,7 @@ let resizer: ResizeObserver | null = null
 interface MapContainerProps {
     onMapLoad?: (map: mapboxgl.Map) => void
     onDrawReady?: (draw: MapboxDraw) => void
+    onOpenSettings?: () => void
 }
 
 const mapCanvasDebounce = (map: mapboxgl.Map, delay: number, mapRef: HTMLDivElement) => {
@@ -43,19 +54,22 @@ const useMapStore = create<MapViewContext>((set) => ({
     setDrawInstance: (drawInstance: MapboxDraw) => set({ drawInstance }),
 }))
 
-const MapContainer = forwardRef<HTMLDivElement, MapContainerProps>(({ onMapLoad, onDrawReady }, ref) => {
+const MapContainer = forwardRef<HTMLDivElement, MapContainerProps>(({ onMapLoad, onDrawReady, onOpenSettings }, ref) => {
 
     const isProcessingDrawEventRef = useRef(false)
     const drawInstanceRef = useRef<MapboxDraw | null>(null)
 
     const initializedRef = useRef(false)
     const mapWrapperRef = useRef<HTMLDivElement>(null)
+    const [missingTokenDialogOpen, setMissingTokenDialogOpen] = useState(false)
 
     const mapInitialLongitude = useSettingStore((s) => s.mapInitialLongitude)
     const mapInitialLatitude = useSettingStore((s) => s.mapInitialLatitude)
+    const savedMapboxAccessToken = useSettingStore((s) => s.mapboxAccessToken)
 
     const { setMap, setDrawInstance } = useMapStore()
     const mapFromStore = useMapStore((s) => s.map)
+    const mapboxAccessToken = getMapboxAccessToken(savedMapboxAccessToken)
 
     // Keep existing map centered on the configured initial center.
     // This also makes settings changes immediately reflect on the map.
@@ -89,7 +103,15 @@ const MapContainer = forwardRef<HTMLDivElement, MapContainerProps>(({ onMapLoad,
     }, [])
 
     useEffect(() => {
-        mapboxgl.accessToken = import.meta.env.VITE_MAP_TOKEN
+        if (!mapboxAccessToken) {
+            setMissingTokenDialogOpen(true)
+        }
+    }, [mapboxAccessToken])
+
+    useEffect(() => {
+        if (!mapboxAccessToken) return
+
+        mapboxgl.accessToken = mapboxAccessToken
         const currentMapWrapper = mapWrapperRef.current
 
         if (currentMapWrapper && !initializedRef.current) {
@@ -269,7 +291,52 @@ const MapContainer = forwardRef<HTMLDivElement, MapContainerProps>(({ onMapLoad,
             }
         }
 
-    }, [onMapLoad, onDrawReady, setMap, setDrawInstance, handleDrawCreate])
+    }, [onMapLoad, onDrawReady, setMap, setDrawInstance, handleDrawCreate, mapboxAccessToken])
+
+    if (!mapboxAccessToken) {
+        return (
+            <>
+                <div className="flex h-full items-center justify-center bg-[#151515] px-6 text-center">
+                    <div className="max-w-md rounded-md border border-[#2A2C33] bg-[#1E1E1E] px-6 py-5 text-gray-200">
+                        <div className="text-sm font-semibold text-white">Mapbox token required</div>
+                        <div className="mt-2 text-xs leading-5 text-gray-400">
+                            Set <span className="font-mono text-gray-200">{mapboxTokenEnvName}</span> in Settings or <span className="font-mono text-gray-200">client/src/.env</span> before using Map view.
+                        </div>
+                    </div>
+                </div>
+                <Dialog open={missingTokenDialogOpen} onOpenChange={setMissingTokenDialogOpen}>
+                    <DialogContent className="border-[#2A2C33] bg-[#1E1E1E] text-white sm:max-w-md">
+                        <DialogHeader>
+                            <DialogTitle>Mapbox token required</DialogTitle>
+                            <DialogDescription className="text-gray-400">
+                                Map view needs a Mapbox public token. Add a token in Settings, or create <span className="font-mono text-gray-200">client/src/.env</span> with <span className="font-mono text-gray-200">{mapboxTokenEnvName}</span>.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <DialogFooter>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                className="text-gray-300 hover:bg-gray-700 hover:text-white"
+                                onClick={() => setMissingTokenDialogOpen(false)}
+                            >
+                                Dismiss
+                            </Button>
+                            <Button
+                                type="button"
+                                className="bg-blue-500 text-white hover:bg-blue-600"
+                                onClick={() => {
+                                    setMissingTokenDialogOpen(false)
+                                    onOpenSettings?.()
+                                }}
+                            >
+                                Open Settings
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+            </>
+        )
+    }
 
     return (
         <div className="flex h-full items-center justify-center">
@@ -282,9 +349,10 @@ interface MapViewComponentProps {
     templateName?: string
     selectedNode?: IResourceNode | null
     getResourceNodeByKey?: (key: string) => IResourceNode | null
+    onOpenSettings?: () => void
 }
 
-export default function MapViewComponent({ templateName = 'default', selectedNode = null, getResourceNodeByKey }: MapViewComponentProps) {
+export default function MapViewComponent({ templateName = 'default', selectedNode = null, getResourceNodeByKey, onOpenSettings }: MapViewComponentProps) {
 
     const [mapInstance, setMapInstance] = useState<mapboxgl.Map | null>(null)
     const [drawInstance, setDrawInstance] = useState<MapboxDraw | null>(null)
@@ -310,7 +378,7 @@ export default function MapViewComponent({ templateName = 'default', selectedNod
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60}>
-                <MapContainer onMapLoad={handleMapLoad} onDrawReady={handleDrawReady} />
+                <MapContainer onMapLoad={handleMapLoad} onDrawReady={handleDrawReady} onOpenSettings={onOpenSettings} />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={27}>

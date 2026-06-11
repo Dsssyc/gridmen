@@ -8,10 +8,12 @@ export interface SelectedNodeStore {
 export interface SettingsProps {
     publicIP: string | null
     highSpeedMode: boolean
+    mapboxAccessToken: string
     mapInitialLongitude: number
     mapInitialLatitude: number
     setHighSpeedMode: (highSpeedMode: boolean) => void
     setLeadIP: (leadIP: string) => void
+    setMapboxAccessToken: (mapboxAccessToken: string) => void
     setMapInitialLongitude: (lng: number) => void
     setMapInitialLatitude: (lat: number) => void
     setMapInitialCenter: (lng: number, lat: number) => void
