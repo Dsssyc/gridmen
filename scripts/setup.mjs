@@ -46,6 +46,12 @@ const steps = [
     label: "Install Electron dependencies",
   },
   {
+    args: [path.join("node_modules", "electron", "install.js")],
+    command: "node",
+    cwd: path.join(rootDir, "client"),
+    label: "Install Electron runtime",
+  },
+  {
     args: ["ci"],
     command: "npm",
     cwd: path.join(rootDir, "client", "src"),

@@ -39,6 +39,15 @@ test("withProxyEnv preserves explicit Electron mirror", () => {
   assert.equal(env.npm_config_electron_mirror, undefined);
 });
 
+test("withProxyEnv removes Electron node-mode flag from child processes", () => {
+  const { env } = withProxyEnv({
+    ELECTRON_RUN_AS_NODE: "1",
+    PATH: "/usr/bin",
+  });
+
+  assert.equal(env.ELECTRON_RUN_AS_NODE, undefined);
+});
+
 test("proxyConfig prefers explicit http proxy over all proxy", () => {
   const proxy = proxyConfig({
     ALL_PROXY: "socks5://proxy.example.test:1080",

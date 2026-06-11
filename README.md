@@ -1,9 +1,9 @@
 # Gridmen
 
 <p align="center">
-  <a href="https://www.electronjs.org/"><img src="https://img.shields.io/badge/Electron-36.2.1-47848F?logo=electron&logoColor=white" alt="Electron 36.2.1"></a>
+  <a href="https://www.electronjs.org/"><img src="https://img.shields.io/badge/Electron-42.4.0-47848F?logo=electron&logoColor=white" alt="Electron 42.4.0"></a>
   <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19.1.0-61DAFB?logo=react&logoColor=white" alt="React 19.1.0"></a>
-  <a href="https://vitejs.dev/"><img src="https://img.shields.io/badge/Vite-7.0.0-646CFF?logo=vite&logoColor=white" alt="Vite 7.0.0"></a>
+  <a href="https://vitejs.dev/"><img src="https://img.shields.io/badge/Vite-7.3.5-646CFF?logo=vite&logoColor=white" alt="Vite 7.3.5"></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.8%2F5.9-3178C6?logo=typescript&logoColor=white" alt="TypeScript 5.8/5.9"></a>
   <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind%20CSS-4.1.11-06B6D4?logo=tailwindcss&logoColor=white" alt="Tailwind CSS 4.1.11"></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-0.116.1-009688?logo=fastapi&logoColor=white" alt="FastAPI 0.116.1"></a>
@@ -82,7 +82,7 @@ Install all JavaScript and Python dependencies:
 npm run setup
 ```
 
-`npm run setup` installs the workspace, Electron shell, React/Vite renderer, and backend Python dependencies. It also runs `uv sync` in `server/`.
+`npm run setup` installs the workspace, Electron shell, Electron runtime, React/Vite renderer, and backend Python dependencies. It also runs `uv sync` in `server/`.
 
 #### Environment Configuration
 

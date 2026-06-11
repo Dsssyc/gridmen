@@ -44,6 +44,8 @@ export function withProxyEnv(env = process.env) {
   const proxy = proxyConfig(env);
   const childEnv = { ...env };
 
+  delete childEnv.ELECTRON_RUN_AS_NODE;
+
   if (proxy.httpProxy) {
     childEnv.HTTP_PROXY = proxy.httpProxy;
     childEnv.http_proxy = proxy.httpProxy;
