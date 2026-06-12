@@ -85,6 +85,7 @@ interface FeaturePickResource {
     kind: 'vector'
     nodeKey: string
     nodeInfo: string
+    lockId: string | null
     name: string
 }
 
@@ -522,18 +523,21 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                 drawInstance.delete(featureIds)
             }
 
+            const vectorLockId = dragNodeLockId || null
             pageContext.current.selectedVectorFeatureIds = new Set<string>()
+            pageContext.current.vectorLockId = vectorLockId
 
             pageContext.current.featuePickResource = {
                 kind: 'vector',
                 nodeKey: dragNodeKey,
                 nodeInfo: dragNodeInfo,
+                lockId: vectorLockId,
                 name: getDraggedNodeDisplayName(payload)
             }
 
             store.get<{ on: Function; off: Function }>('isLoading')!.on()
 
-            const vectorData = await api.vector.getVector(dragNodeInfo, dragNodeLockId || '')
+            const vectorData = await api.vector.getVector(dragNodeInfo, vectorLockId)
             pageContext.current.vectorData = vectorData.data;
             pageContext.current.featuePickResource.name = vectorData.data?.name || pageContext.current.featuePickResource.name;
 
@@ -567,8 +571,8 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             console.warn('Failed to clear draw preview:', e)
         }
 
-        // pageContext.current.vectorLockId = null
-        // pageContext.current.vectorData = null
+        pageContext.current.vectorLockId = null
+        pageContext.current.vectorData = null
 
         triggerRepaint()
     }
@@ -588,7 +592,8 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             store.get<{ on: Function; off: Function }>('isLoading')!.on()
 
             if (pageContext.current.featuePickResource.kind === 'vector') {
-                pageContext.current.topologyLayer!.executePickCellsByVectorNode(pageContext.current.featuePickResource.nodeInfo, pageContext.current.vectorLockId, pickingTab)
+                const vectorLockId = pageContext.current.featuePickResource.lockId ?? pageContext.current.vectorLockId
+                pageContext.current.topologyLayer!.executePickCellsByVectorNode(pageContext.current.featuePickResource.nodeInfo, vectorLockId, pickingTab)
                 return
             }
         } catch (error) {
