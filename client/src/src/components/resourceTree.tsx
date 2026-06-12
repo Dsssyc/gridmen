@@ -14,6 +14,7 @@ import {
     ChevronRight,
     SquaresUnite,
     SplinePointer,
+    MoreHorizontal,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/utils/utils'
@@ -287,17 +288,32 @@ const NodeRenderer = ({
     const [isDragOver, setIsDragOver] = useState(false)
 
     const handleClickNode = useCallback(() => {
-        if (!isFolder && !node.isTemp) return
-
         if (node.isTemp) {
             useToolPanelStore.getState().setActiveTab('create')
         }
 
-        // Always set selected key so UI highlights the clicked node
-        setSelectedNodeKey(node.key)
+        void tree.clickNode(node)
+    }, [node, tree])
 
-        ; (node.tree as ResourceTree).clickNode(node)
-    }, [node, isFolder, setSelectedNodeKey])
+    const handleContextMenu = useCallback(() => {
+        tree.selectNode(node)
+    }, [node, tree])
+
+    const handleOpenContextMenu = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+        e.preventDefault()
+        e.stopPropagation()
+
+        tree.selectNode(node)
+
+        nodeRef.current?.dispatchEvent(new window.MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            button: 2,
+            clientX: e.clientX,
+            clientY: e.clientY,
+        }))
+    }, [node, tree])
 
     const handleNodeMenu = useCallback((node: IResourceNode, menuItem: any) => {
         if (menuItem === 'New Resource' || menuItem === 'New Folder') {
@@ -453,58 +469,77 @@ const NodeRenderer = ({
     return (
         <div>
             <ContextMenu>
-                <ContextMenuTrigger>
+                <ContextMenuTrigger asChild>
                     <div
                         ref={nodeRef}
                         className={cn(
-                            'flex items-center py-0.5 px-2 hover:bg-gray-700 cursor-pointer text-sm w-full select-none',
+                            'group flex h-6 w-full cursor-pointer select-none items-center text-sm hover:bg-gray-700',
                             isSelected ? 'bg-gray-600 text-white' : 'text-gray-300',
                             isFolder && isDragOver && 'bg-gray-500/50',
                         )}
                         data-node-type={isFolder ? 'folder' : 'file'}
-                        style={{ paddingLeft: `${depth * 10}px` }}
                         onClick={handleClickNode}
-                        // onDoubleClick={handleDoubleClickNode}
+                        onContextMenu={handleContextMenu}
                         draggable={!isFolder}
                         onDragStart={(e) => { handleDragStart(e) }}
                         onDragOver={(e) => { handleDragOver(e) }}
                         onDragLeave={(e) => { handleDragLeave(e) }}
                         onDrop={(e) => { handleDrop(e) }}
                     >
-                        <div className='ml-1.5 flex'>
+                        <div
+                            className='flex min-w-0 flex-1 items-center pr-1'
+                            style={{ paddingLeft: `${depth * 10 + 6}px` }}
+                        >
                             {isFolder ? (
                                 <>
                                     {tree.isNodeExpanded(node.id) ? (
                                         <>
-                                            <ChevronDown className='w-4 h-4 mr-0.5' />
-                                            <FolderOpen className='w-4 h-4 mr-1 text-gray-400' />
+                                            <ChevronDown className='w-4 h-4 mr-0.5 shrink-0' />
+                                            <FolderOpen className='w-4 h-4 mr-1 text-gray-400 shrink-0' />
                                         </>
                                     ) : (
                                         <>
-                                            <ChevronRight className='w-4 h-4 mr-0.5' />
-                                            <Folder className='w-4 h-4 mr-1 text-gray-400' />
+                                            <ChevronRight className='w-4 h-4 mr-0.5 shrink-0' />
+                                            <Folder className='w-4 h-4 mr-1 text-gray-400 shrink-0' />
                                         </>
                                     )}
                                 </>
                             ) : (
-                                (() => {
-                                    switch (node.template_name) {
-                                        case 'schema':
-                                            return <MapPin className={cn(node.isTemp ? 'text-white' : 'text-red-500', 'w-4 h-4 mr-1 ml-4.5 ')} />
-                                        case 'patch':
-                                            return <Square className={cn(node.isTemp ? 'text-white' : 'text-sky-500', 'w-4 h-4 mr-1 ml-4.5 ')} />
-                                        case 'grid':
-                                            return <SquaresUnite className={cn(node.isTemp ? 'text-white' : 'text-amber-500', 'w-4 h-4 mr-1 ml-4.5 ')} />
-                                        case 'vector':
-                                            return <SplinePointer className={cn(node.isTemp ? 'text-white' : 'text-indigo-500', 'w-4 h-4 mr-1 ml-4.5 ')} />
-                                        default:
-                                            return <File className='w-4 h-4 mr-2 ml-4.5 text-blue-500' />
-                                    }
-                                })()
+                                <>
+                                    <span className='w-[18px] shrink-0' />
+                                    {(() => {
+                                        switch (node.template_name) {
+                                            case 'schema':
+                                                return <MapPin className={cn(node.isTemp ? 'text-white' : 'text-red-500', 'w-4 h-4 mr-1 shrink-0')} />
+                                            case 'patch':
+                                                return <Square className={cn(node.isTemp ? 'text-white' : 'text-sky-500', 'w-4 h-4 mr-1 shrink-0')} />
+                                            case 'grid':
+                                                return <SquaresUnite className={cn(node.isTemp ? 'text-white' : 'text-amber-500', 'w-4 h-4 mr-1 shrink-0')} />
+                                            case 'vector':
+                                                return <SplinePointer className={cn(node.isTemp ? 'text-white' : 'text-indigo-500', 'w-4 h-4 mr-1 shrink-0')} />
+                                            default:
+                                                return <File className='w-4 h-4 mr-1 text-blue-500 shrink-0' />
+                                        }
+                                    })()}
+                                </>
                             )}
+                            <span className={cn('min-w-0 flex-1 truncate', node.isTemp && 'italic')}>{node.name}</span>
+                            {node.isTemp && <span className='ml-2 shrink-0 text-xs font-semibold text-yellow-500'>[temp]</span>}
                         </div>
-                        <span className={cn(node.isTemp && 'italic')}>{node.name}</span>
-                        {node.isTemp && <span className='ml-2 text-xs font-semibold text-yellow-500'>[temp]</span>}
+                        <button
+                            type='button'
+                            aria-label={`Open actions for ${node.name}`}
+                            className={cn(
+                                'mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-gray-400 opacity-0 outline-none transition-opacity hover:bg-gray-600 hover:text-white focus:opacity-100 focus:ring-1 focus:ring-gray-500',
+                                (isSelected ? 'opacity-100' : 'group-hover:opacity-100')
+                            )}
+                            draggable={false}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onDragStart={(e) => e.preventDefault()}
+                            onClick={handleOpenContextMenu}
+                        >
+                            <MoreHorizontal className='h-4 w-4' />
+                        </button>
                     </div>
                 </ContextMenuTrigger>
                 {renderNodeMenu()}
