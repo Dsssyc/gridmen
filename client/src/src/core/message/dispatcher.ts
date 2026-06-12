@@ -2,6 +2,7 @@ import Actor from './actor'
 import WorkerPool from '../worker/workerPool'
 import { uniqueId, asyncAll } from '../util/utils'
 import type { Class, Callback } from '../types'
+import { getEffectiveApiBaseUrl, getSavedApiBaseUrlOverride } from '@/utils/apiBaseUrl'
 
 class Dispatcher {
 
@@ -27,7 +28,9 @@ class Dispatcher {
             actor.name = `Worker ${index}`
             this.actors.push(actor)
         })
-        this.broadcast('checkIfReady', null, () => { this.ready = true })
+        this.syncApiBaseUrl(() => {
+            this.broadcast('checkIfReady', null, () => { this.ready = true })
+        })
     }
 
     broadcast(type: string, data: unknown, cb?: Callback<unknown>) {
@@ -36,6 +39,11 @@ class Dispatcher {
         asyncAll(this.actors, (actor, done) => {
             actor.send(type, data, done)
         }, cb)
+    }
+
+    syncApiBaseUrl(cb?: Callback<unknown>) {
+        const apiBaseUrl = getEffectiveApiBaseUrl(getSavedApiBaseUrlOverride())
+        this.broadcast('setApiBaseUrlForWorker', apiBaseUrl, cb)
     }
 
     get actor(): Actor {

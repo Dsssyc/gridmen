@@ -1,6 +1,26 @@
 import { app, BrowserWindow, ipcMain, dialog, screen } from 'electron';
 import path from 'path';
 
+type PatchSelectMode = 'brush' | 'box';
+
+const PATCH_SELECT_MODE_SHORTCUT_CHANNEL = 'patch:select-mode-shortcut';
+
+function getPatchSelectModeShortcut(input: {
+	type: string;
+	key: string;
+	code?: string;
+	control?: boolean;
+	meta?: boolean;
+}): PatchSelectMode | null {
+	if (input.type !== 'keyDown') return null;
+	if (!input.control && !input.meta) return null;
+
+	if (input.key === '1' || input.code === 'Digit1') return 'brush';
+	if (input.key === '2' || input.code === 'Digit2') return 'box';
+
+	return null;
+}
+
 function createWindow(): void {
 	const mainWindow = new BrowserWindow({
 		width: 1200,
@@ -29,6 +49,13 @@ function createWindow(): void {
 		if (input.key === 'F12' && input.type === 'keyDown') {
 			mainWindow.webContents.toggleDevTools();
 			event.preventDefault(); // prevents other F12 default actions if any
+			return;
+		}
+
+		const patchSelectMode = getPatchSelectModeShortcut(input);
+		if (patchSelectMode) {
+			mainWindow.webContents.send(PATCH_SELECT_MODE_SHORTCUT_CHANNEL, patchSelectMode);
+			event.preventDefault();
 		}
 	});
 

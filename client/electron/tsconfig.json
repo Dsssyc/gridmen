@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2020", // Or a newer version Electron supports
-    "module": "commonjs",
+    "module": "Node16",
     "lib": ["ES2020"],
     "outDir": "./dist", // Output directory for compiled JS
     "rootDir": "./",    // Source directory
@@ -10,7 +10,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node"
+    "moduleResolution": "node16"
   },
   "include": ["./**/*.ts"], // Files to include in compilation
   "exclude": ["node_modules", "dist"]

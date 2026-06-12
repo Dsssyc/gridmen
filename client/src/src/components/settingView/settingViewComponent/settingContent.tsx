@@ -14,6 +14,13 @@ import {
     mapboxTokenEnvName,
     normalizeMapboxPublicToken,
 } from "@/utils/mapboxToken"
+import {
+    DEFAULT_API_BASE_URL,
+    apiBaseUrlEnvNames,
+    getApiBaseUrlSource,
+    getEffectiveApiBaseUrl,
+    normalizeApiBaseUrl,
+} from "@/utils/apiBaseUrl"
 
 interface SettingContentProps {
     activeCategory: string
@@ -23,12 +30,14 @@ export default function SettingContent({ activeCategory }: SettingContentProps) 
 
     const {
         publicIP: leadIP,
+        apiBaseUrlOverride,
         highSpeedMode,
         mapboxAccessToken: savedMapboxAccessToken,
         mapInitialLongitude,
         mapInitialLatitude,
         setHighSpeedMode,
         setLeadIP,
+        setApiBaseUrlOverride,
         setMapboxAccessToken,
         setMapInitialCenter,
         setMapInitialLongitude,
@@ -44,6 +53,18 @@ export default function SettingContent({ activeCategory }: SettingContentProps) 
     const pickMapRef = useRef<mapboxgl.Map | null>(null)
     const pickMarkerRef = useRef<mapboxgl.Marker | null>(null)
     const mapboxAccessToken = getMapboxAccessToken(savedMapboxAccessToken)
+    const trimmedApiBaseUrlOverride = apiBaseUrlOverride.trim()
+    const apiBaseUrlError = trimmedApiBaseUrlOverride && !normalizeApiBaseUrl(trimmedApiBaseUrlOverride)
+        ? `Use an http:// or https:// URL, for example ${DEFAULT_API_BASE_URL}.`
+        : null
+    const effectiveApiBaseUrl = getEffectiveApiBaseUrl(apiBaseUrlOverride)
+    const apiBaseUrlSource = getApiBaseUrlSource(apiBaseUrlOverride)
+    const apiBaseUrlSourceLabel = (() => {
+        if (apiBaseUrlSource === 'settings') return 'settings override'
+        if (apiBaseUrlSource === 'runtime') return 'runtime override'
+        if (apiBaseUrlSource === 'env') return apiBaseUrlEnvNames.join(' / ')
+        return 'default'
+    })()
     const trimmedMapboxAccessToken = savedMapboxAccessToken.trim()
     const mapboxTokenError = (() => {
         if (!trimmedMapboxAccessToken) return null
@@ -184,6 +205,20 @@ export default function SettingContent({ activeCategory }: SettingContentProps) 
                     className="w-64 bg-gray-700 border-gray-600 text-white"
                     onChange={(e) => setLeadIP(e.target.value)}
                 />
+            </SettingItem>
+            <SettingItem title="Backend API URL" description="Local backend endpoint. Leave blank to use env or the default 8000 server.">
+                <div className="w-[360px] space-y-1">
+                    <Input
+                        value={apiBaseUrlOverride}
+                        className="h-7 bg-gray-700 border-gray-600 text-white"
+                        onChange={(e) => setApiBaseUrlOverride(e.target.value.trim())}
+                        placeholder={DEFAULT_API_BASE_URL}
+                        aria-invalid={Boolean(apiBaseUrlError)}
+                    />
+                    <div className={apiBaseUrlError ? "text-xs text-red-300" : "text-xs text-gray-500"}>
+                        {apiBaseUrlError ?? `Using ${effectiveApiBaseUrl} from ${apiBaseUrlSourceLabel}.`}
+                    </div>
+                </div>
             </SettingItem>
         </div >
     )

@@ -1,3 +1,5 @@
+import { getEffectiveApiBaseUrl, getSavedApiBaseUrlOverride } from '@/utils/apiBaseUrl'
+
 export function extractIPFromUrl(url: string): string {
     try {
         const urlObj = new URL(url)
@@ -17,11 +19,10 @@ export function decodeNodeInfo(nodeInfo: string): { address: string, nodeKey: st
             throw new Error(`Invalid address format in nodeInfo: ${nodeInfo}`)
         }
     } else {
-        const address = import.meta.env.VITE_API_BASE_URL
-        if (address) {
-            return { address, nodeKey: nodeInfo }
-        } else {
-            return { address: 'http://127.0.0.1:8000', nodeKey: nodeInfo }
-        }
+        return { address: getLocalApiBaseUrl(), nodeKey: nodeInfo }
     }
+}
+
+export function getLocalApiBaseUrl(): string {
+    return getEffectiveApiBaseUrl(getSavedApiBaseUrlOverride())
 }

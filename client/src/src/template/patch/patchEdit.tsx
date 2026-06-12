@@ -85,10 +85,19 @@ interface FeaturePickResource {
     kind: 'vector'
     nodeKey: string
     nodeInfo: string
+    lockId: string | null
     name: string
 }
 
+type PatchSelectMode = 'brush' | 'box'
 type TopologyOperationType = 'subdivide' | 'merge' | 'delete' | 'recover' | null
+
+const getDraggedNodeDisplayName = (payload: { nodeKey?: string, nodeName?: string | null }) => {
+    const nodeName = payload.nodeName?.trim()
+    if (nodeName) return nodeName
+
+    return payload.nodeKey?.split('.').filter(Boolean).pop() || 'Vector'
+}
 
 const topologyTips = [
     { tip: 'Hold Shift to select/deselect grids with Brush or Box.' },
@@ -162,10 +171,38 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
     const [selectAllDialogOpen, setSelectAllDialogOpen] = useState(false)
     const [deleteSelectDialogOpen, setDeleteSelectDialogOpen] = useState(false)
     const [pickingTab, setPickingTab] = useState<boolean>(true)
-    const [selectTab, setSelectTab] = useState<'brush' | 'box'>('brush')
+    const [selectTab, setSelectTab] = useState<PatchSelectMode>('brush')
     const [activeTopologyOperation, setActiveTopologyOperation] = useState<TopologyOperationType>(null)
 
     const [, triggerRepaint] = useReducer(x => x + 1, 0)
+
+    const setPatchSelectMode = useCallback((mode: PatchSelectMode) => {
+        if (checkSwitchOn) return
+
+        pageContext.current!.editingState.select = mode
+        setSelectTab(mode)
+    }, [checkSwitchOn])
+
+    const clearUploadedFeaturePreview = (options: { repaint?: boolean } = {}) => {
+        pageContext.current.featuePickResource = null
+
+        try {
+            const featureIds = Array.from(pageContext.current.selectedVectorFeatureIds)
+            if (featureIds.length > 0) {
+                drawInstance.delete(featureIds)
+            }
+            pageContext.current.selectedVectorFeatureIds = new Set<string>()
+        } catch (e) {
+            console.warn('Failed to clear draw preview:', e)
+        }
+
+        pageContext.current.vectorLockId = null
+        pageContext.current.vectorData = null
+
+        if (options.repaint ?? true) {
+            triggerRepaint()
+        }
+    }
 
     useEffect(() => {
         loadContext()
@@ -257,9 +294,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                     if (id && map.getLayer(id)) map.removeLayer(id)
                     pageContext.current.perPatchCLGId = null
 
-                    const featureIds = Array.from(pageContext.current.selectedVectorFeatureIds!)
-                    drawInstance.delete(featureIds)
-                    pageContext.current.selectedVectorFeatureIds!.clear()
+                    clearUploadedFeaturePreview({ repaint: false })
 
                     pageContext.current.benchmarkCleanup?.()
                     pageContext.current.benchmarkCleanup = null
@@ -277,7 +312,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
         console.log('unloadContext called')
 
-        handleClearUploadedFeature();
+        clearUploadedFeaturePreview({ repaint: false })
         pageContext.current.benchmarkCleanup?.()
         pageContext.current.benchmarkCleanup = null;
 
@@ -290,6 +325,8 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                     const id = pageContext.current.perPatchCLGId
                     if (id && map.getLayer(id)) map.removeLayer(id)
                     pageContext.current.perPatchCLGId = null
+
+                    clearUploadedFeaturePreview({ repaint: false })
 
                     pageContext.current.benchmarkCleanup?.()
                     pageContext.current.benchmarkCleanup = null
@@ -488,6 +525,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         try {
             const payload = JSON.parse(raw) as {
                 nodeKey: string
+                nodeName?: string
                 nodeInfo: string
                 nodeLockId: string | null
                 templateName: string
@@ -501,30 +539,30 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                 return
             }
 
-            if (pageContext.current.selectedVectorFeatureIds) {
-                const featureIds = Array.from(pageContext.current.selectedVectorFeatureIds!)
-                drawInstance.delete(featureIds)
-            }
+            clearUploadedFeaturePreview({ repaint: false })
 
+            const vectorLockId = dragNodeLockId || null
             pageContext.current.selectedVectorFeatureIds = new Set<string>()
+            pageContext.current.vectorLockId = vectorLockId
 
             pageContext.current.featuePickResource = {
                 kind: 'vector',
                 nodeKey: dragNodeKey,
                 nodeInfo: dragNodeInfo,
-                name: payload.sourceTreeTitle || 'Vector'
+                lockId: vectorLockId,
+                name: getDraggedNodeDisplayName(payload)
             }
 
             store.get<{ on: Function; off: Function }>('isLoading')!.on()
 
-            const vectorData = await api.vector.getVector(dragNodeInfo, dragNodeLockId || '')
+            const vectorData = await api.vector.getVector(dragNodeInfo, vectorLockId)
             pageContext.current.vectorData = vectorData.data;
-
-            (pageContext.current.vectorData.feature_json as GeoJSON.FeatureCollection).features.forEach(feature => pageContext.current.selectedVectorFeatureIds.add(feature.id as string))
+            pageContext.current.featuePickResource.name = vectorData.data?.name || pageContext.current.featuePickResource.name;
 
             try {
                 if (drawInstance) {
-                    drawInstance.add(pageContext.current.vectorData.feature_json as any)
+                    const addedIds = drawInstance.add(pageContext.current.vectorData.feature_json as any) as string[]
+                    addedIds.forEach((id) => pageContext.current.selectedVectorFeatureIds.add(id))
                 }
             } catch (renderErr) {
                 console.warn('Failed to render dragged vector on map:', renderErr)
@@ -540,20 +578,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
     }
 
     const handleClearUploadedFeature = () => {
-        pageContext.current.featuePickResource = null
-
-        try {
-            const featureIds = Array.from(pageContext.current.selectedVectorFeatureIds!)
-            drawInstance.delete(featureIds)
-            pageContext.current.selectedVectorFeatureIds = new Set<string>()
-        } catch (e) {
-            console.warn('Failed to clear draw preview:', e)
-        }
-
-        // pageContext.current.vectorLockId = null
-        // pageContext.current.vectorData = null
-
-        triggerRepaint()
+        clearUploadedFeaturePreview()
     }
 
     const handleSelectFeaturePick = useCallback(async () => {
@@ -571,7 +596,8 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             store.get<{ on: Function; off: Function }>('isLoading')!.on()
 
             if (pageContext.current.featuePickResource.kind === 'vector') {
-                pageContext.current.topologyLayer!.executePickCellsByVectorNode(pageContext.current.featuePickResource.nodeInfo, pageContext.current.vectorLockId, pickingTab)
+                const vectorLockId = pageContext.current.featuePickResource.lockId ?? pageContext.current.vectorLockId
+                pageContext.current.topologyLayer!.executePickCellsByVectorNode(pageContext.current.featuePickResource.nodeInfo, vectorLockId, pickingTab)
                 return
             }
         } catch (error) {
@@ -609,15 +635,17 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         const handleKeyDown = (event: KeyboardEvent) => {
             if (checkSwitchOn) return
             if (event.ctrlKey || event.metaKey) {
-                if (event.key === 'P' || event.key === 'p') {
+                const key = event.key.toLowerCase()
+
+                if (key === 'p') {
                     event.preventDefault()
                     setPickingTab(true)
                 }
-                if (event.key === 'U' || event.key === 'u') {
+                if (key === 'u') {
                     event.preventDefault()
                     setPickingTab(false)
                 }
-                if (event.key === 'A' || event.key === 'a') {
+                if (key === 'a') {
                     event.preventDefault()
                     if (highSpeedMode) {
                         handleConfirmSelectAll()
@@ -625,7 +653,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                         setSelectAllDialogOpen(true)
                     }
                 }
-                if (event.key === 'C' || event.key === 'c') {
+                if (key === 'c') {
                     event.preventDefault()
                     if (highSpeedMode) {
                         handleConfirmDeleteSelect()
@@ -633,17 +661,15 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                         setDeleteSelectDialogOpen(true)
                     }
                 }
-                if (event.key === '1') {
+                if (event.key === '1' || event.code === 'Digit1') {
                     event.preventDefault()
-                    pageContext.current!.editingState.select = 'brush'
-                    setSelectTab('brush')
+                    setPatchSelectMode('brush')
                 }
-                if (event.key === '2') {
+                if (event.key === '2' || event.code === 'Digit2') {
                     event.preventDefault()
-                    pageContext.current!.editingState.select = 'box'
-                    setSelectTab('box')
+                    setPatchSelectMode('box')
                 }
-                if (event.key === 'S' || event.key === 's') {
+                if (key === 's') {
                     event.preventDefault()
                     if (highSpeedMode) {
                         store.get<{ on: Function; off: Function }>('isLoading')!.on()
@@ -652,7 +678,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                         setActiveTopologyOperation('subdivide')
                     }
                 }
-                if (event.key === 'M' || event.key === 'm') {
+                if (key === 'm') {
                     event.preventDefault()
                     if (highSpeedMode) {
                         store.get<{ on: Function; off: Function }>('isLoading')!.on()
@@ -661,7 +687,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                         setActiveTopologyOperation('merge')
                     }
                 }
-                if (event.key === 'D' || event.key === 'd') {
+                if (key === 'd') {
                     event.preventDefault()
                     if (highSpeedMode) {
                         pageContext.current.topologyLayer!.executeDeleteCells()
@@ -669,7 +695,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                         setActiveTopologyOperation('delete')
                     }
                 }
-                if (event.key === 'R' || event.key === 'r') {
+                if (key === 'r') {
                     event.preventDefault()
                     if (highSpeedMode) {
                         pageContext.current.topologyLayer!.executeRecoverCells()
@@ -680,19 +706,25 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             }
         }
 
-        window.addEventListener('keydown', handleKeyDown)
+        window.addEventListener('keydown', handleKeyDown, true)
 
         return () => {
-            window.removeEventListener('keydown', handleKeyDown)
+            window.removeEventListener('keydown', handleKeyDown, true)
         }
     }, [
         setPickingTab,
         handleConfirmDeleteSelect,
         handleConfirmSelectAll,
-        selectTab,
+        setPatchSelectMode,
         checkSwitchOn,
         highSpeedMode
     ])
+
+    useEffect(() => {
+        return window.electronAPI?.onPatchSelectModeShortcut?.((mode) => {
+            setPatchSelectMode(mode)
+        })
+    }, [setPatchSelectMode])
 
     const toggleCheckSwitch = () => {
         if (checkSwitchOn === pageContext.current!.isChecking) {
@@ -1145,7 +1177,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                         <button
                                             className={` flex-1 py-2 px-3 rounded-md transition-colors duration-200 text-white flex flex-col gap-0.5 text-sm justify-center items-center ${checkSwitchOn ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} 
                                                             ${selectTab === 'brush' ? 'bg-[#FF8F2E] ' : ' hover:bg-gray-500'}`}
-                                            onClick={() => { !checkSwitchOn && setSelectTab('brush') }}
+                                            onClick={() => { setPatchSelectMode('brush') }}
                                             disabled={checkSwitchOn}
                                         >
                                             <div className='flex flex-row gap-1 items-center'>
@@ -1153,13 +1185,13 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                                 Brush
                                             </div>
                                             <div className={`text-xs ${selectTab === 'brush' && 'text-white'} `}>
-                                                [ Ctrl+1 ]
+                                                [ Ctrl/Cmd+1 ]
                                             </div>
                                         </button>
                                         <button
                                             className={`flex-1 py-2 px-3 rounded-md transition-colors duration-200 text-white flex flex-col gap-0.5 text-sm justify-center items-center ${checkSwitchOn ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} 
                                                             ${selectTab === 'box' ? 'bg-[#FF8F2E] ' : ' hover:bg-gray-500'}`}
-                                            onClick={() => { !checkSwitchOn && setSelectTab('box') }}
+                                            onClick={() => { setPatchSelectMode('box') }}
                                             disabled={checkSwitchOn}
                                         >
                                             <div className='flex flex-row gap-1 items-center'>
@@ -1167,7 +1199,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                                 Box
                                             </div>
                                             <div className={`text-xs ${selectTab === 'box' && 'text-white'} `}>
-                                                [ Ctrl+2 ]
+                                                [ Ctrl/Cmd+2 ]
                                             </div>
                                         </button>
                                     </div>

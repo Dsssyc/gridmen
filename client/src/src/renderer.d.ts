@@ -8,7 +8,8 @@ declare global {
             openTxtFileDialog: () => Promise<string | null>,
             openInpFileDialog: () => Promise<string | null>,
             openCsvFileDialog: () => Promise<string | null>,
-            openFolderDialog: () => Promise<string | null>
+            openFolderDialog: () => Promise<string | null>,
+            onPatchSelectModeShortcut?: (callback: (mode: 'brush' | 'box') => void) => () => void
         }
     }
 }

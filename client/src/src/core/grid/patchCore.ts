@@ -1,6 +1,7 @@
 import proj4 from 'proj4'
 import * as apis from '@/template/api/apis'
 import Dispatcher from '../message/dispatcher'
+import type { Callback } from '../types'
 import BoundingBox2D from '../util/boundingBox2D'
 import { MercatorCoordinate } from '../math/mercatorCoordinate'
 import { PatchContext, CellCheckInfo, PatchSaveInfo, MultiCellBaseInfo, StructuredCellRenderVertices, CellKeyHashTable } from './types'
@@ -86,6 +87,12 @@ export default class PatchCore {
         return this.levelInfos.length - 1
     }
 
+    private sendWorkerApiTask(type: string, data: unknown, callback?: Callback<any>): void {
+        this._dispatcher.syncApiBaseUrl(() => {
+            this._dispatcher.actor.send(type, data, callback)
+        })
+    }
+
     init(callback?: Function): void {
         // Get src EPSG code (number type)
         const srcEPSG: number = parseInt(this.srcCRS.split(':')[1])
@@ -105,10 +112,12 @@ export default class PatchCore {
             this._nextStorageId = 0
 
             // Brodcast actors to init patch manager and initialize patch cache
-            this._dispatcher.broadcast('setPatchManager', this.context, () => {
-                // Get activate patch information
-                this._dispatcher.actor.send('getPatchInfo', { nodeInfo: this.nodeInfo, lockId: this._lockId }, (_, baseInfo: MultiCellBaseInfo) => {
-                    this.updateMultiCellRenderInfo(baseInfo, callback)
+            this._dispatcher.syncApiBaseUrl(() => {
+                this._dispatcher.broadcast('setPatchManager', this.context, () => {
+                    // Get activate patch information
+                    this.sendWorkerApiTask('getPatchInfo', { nodeInfo: this.nodeInfo, lockId: this._lockId }, (_, baseInfo: MultiCellBaseInfo) => {
+                        this.updateMultiCellRenderInfo(baseInfo, callback)
+                    })
                 })
             })
         })
@@ -265,7 +274,7 @@ export default class PatchCore {
             this._deletedCache[storageId] = DELETED_FLAG
         }
         // Mark provided cells as deleted
-        this._dispatcher.actor.send('deleteCells', { levels, globalIds, nodeInfo: this.nodeInfo, lockId: this._lockId }, () => {
+        this.sendWorkerApiTask('deleteCells', { levels, globalIds, nodeInfo: this.nodeInfo, lockId: this._lockId }, () => {
             callback && callback()
         })
     }
@@ -281,7 +290,7 @@ export default class PatchCore {
             this._deletedCache[storageId] = UNDELETED_FLAG
         }
         // Recover provided cells
-        this._dispatcher.actor.send('restoreCells', { levels, globalIds, nodeInfo: this.nodeInfo, lockId: this._lockId }, () => {
+        this.sendWorkerApiTask('restoreCells', { levels, globalIds, nodeInfo: this.nodeInfo, lockId: this._lockId }, () => {
             callback && callback()
         })
     }
@@ -294,7 +303,7 @@ export default class PatchCore {
      */
     subdivideCells(subdivideInfos: { levels: Uint8Array, globalIds: Uint32Array }, callback?: Function): void {
         // Dispatch a worker to subdivide the cells
-        this._dispatcher.actor.send('subdivideCells', { ...subdivideInfos, nodeInfo: this.nodeInfo, lockId: this._lockId }, (_, baseInfo: MultiCellBaseInfo) => {
+        this.sendWorkerApiTask('subdivideCells', { ...subdivideInfos, nodeInfo: this.nodeInfo, lockId: this._lockId }, (_, baseInfo: MultiCellBaseInfo) => {
             baseInfo.deleted = new Uint8Array(baseInfo.levels.length).fill(UNDELETED_FLAG)
             this.updateMultiCellRenderInfo(baseInfo, callback)
         })
@@ -310,7 +319,7 @@ export default class PatchCore {
             globalIds[i] = globalId
         }
         // Merge provided cells
-        this._dispatcher.actor.send('mergeCells', { levels, globalIds, nodeInfo: this.nodeInfo, lockId: this._lockId }, (_: any, parentInfo: MultiCellBaseInfo) => {
+        this.sendWorkerApiTask('mergeCells', { levels, globalIds, nodeInfo: this.nodeInfo, lockId: this._lockId }, (_: any, parentInfo: MultiCellBaseInfo) => {
             // Get storageIds of all child cells
             const childStorageIds: number[] = []
             const parentNum = parentInfo.levels.length
@@ -330,7 +339,7 @@ export default class PatchCore {
     }
 
     getCellInfoByFeature(path: string, callback?: Function) {
-        this._dispatcher.actor.send('getCellInfoByFeature', { path, nodeInfo: this.nodeInfo, lockId: this._lockId }, (_, cellInfos: { levels: Uint8Array, globalIds: Uint32Array }) => {
+        this.sendWorkerApiTask('getCellInfoByFeature', { path, nodeInfo: this.nodeInfo, lockId: this._lockId }, (_, cellInfos: { levels: Uint8Array, globalIds: Uint32Array }) => {
             const { levels, globalIds } = cellInfos
             const cellNum = levels.length
             const storageIds: number[] = new Array(cellNum)
@@ -343,7 +352,7 @@ export default class PatchCore {
     }
 
     getCellInfoByVectorNode(vectorNodeInfo: string, vectorNodeLockId: string | null, callback?: Function) {
-        this._dispatcher.actor.send('getCellInfoByVectorNode', { nodeInfo: this.nodeInfo, lockId: this._lockId, vectorNodeInfo, vectorNodeLockId }, (_, cellInfos: { levels: Uint8Array, globalIds: Uint32Array }) => {
+        this.sendWorkerApiTask('getCellInfoByVectorNode', { nodeInfo: this.nodeInfo, lockId: this._lockId, vectorNodeInfo, vectorNodeLockId }, (_, cellInfos: { levels: Uint8Array, globalIds: Uint32Array }) => {
             const { levels, globalIds } = cellInfos
             const cellNum = levels.length
             const storageIds: number[] = new Array(cellNum)
@@ -419,7 +428,7 @@ export default class PatchCore {
     }
 
     save(callback: Function) {
-        this._dispatcher.actor.send('savePatch', { nodeInfo: this.nodeInfo, lockId: this._lockId }, (_: any, patchInfo: PatchSaveInfo) => {
+        this.sendWorkerApiTask('savePatch', { nodeInfo: this.nodeInfo, lockId: this._lockId }, (_: any, patchInfo: PatchSaveInfo) => {
             callback && callback(patchInfo)
         })
     }
