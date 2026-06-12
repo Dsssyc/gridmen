@@ -36,7 +36,7 @@ function FrameworkShell() {
     const [focusNode, setFocusNode] = useState<IResourceNode | null>(null)
 
     const publicIP = useSettingStore(state => state.publicIP)
-    const { selectedNodeKey, setSelectedNodeKey } = useSelectedNodeStore()
+    const { setSelectedNodeKey } = useSelectedNodeStore()
 
     const [, triggerRepaint] = useReducer(x => x + 1, 0)
 
@@ -244,24 +244,6 @@ function FrameworkShell() {
         }
         initTree()
     }, [isLoggedIn, location.pathname, privateTree, publicTree, publicIP])
-
-    useEffect(() => {
-        if (!privateTree || !publicTree || !selectedNodeKey) return
-        if (privateTree.selectedNode || publicTree.selectedNode) return
-
-        const nodeInPrivate = privateTree.scene.get(selectedNodeKey)
-        if (nodeInPrivate) {
-            privateTree.selectedNode = nodeInPrivate
-            privateTree.notifyDomUpdate()
-            return
-        }
-
-        const nodeInPublic = publicTree.scene.get(selectedNodeKey)
-        if (nodeInPublic) {
-            publicTree.selectedNode = nodeInPublic
-            publicTree.notifyDomUpdate()
-        }
-    }, [privateTree, publicTree, selectedNodeKey])
 
     const getCurrentTemplateName = (): string => {
         const selectedNode = privateTree?.selectedNode || publicTree?.selectedNode

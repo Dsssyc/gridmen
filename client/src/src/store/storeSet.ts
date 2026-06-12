@@ -150,7 +150,7 @@ export const useLayerStore = create<LayerStore>((set) => ({
 }))
 
 export const useToolPanelStore = create<ToolPanelStore>((set) => ({
-    activeTab: 'create',
+    activeTab: 'check',
     setActiveTab: (tab) => set({ activeTab: tab }),
 }))
 
