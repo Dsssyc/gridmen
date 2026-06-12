@@ -183,6 +183,27 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         setSelectTab(mode)
     }, [checkSwitchOn])
 
+    const clearUploadedFeaturePreview = (options: { repaint?: boolean } = {}) => {
+        pageContext.current.featuePickResource = null
+
+        try {
+            const featureIds = Array.from(pageContext.current.selectedVectorFeatureIds)
+            if (featureIds.length > 0) {
+                drawInstance.delete(featureIds)
+            }
+            pageContext.current.selectedVectorFeatureIds = new Set<string>()
+        } catch (e) {
+            console.warn('Failed to clear draw preview:', e)
+        }
+
+        pageContext.current.vectorLockId = null
+        pageContext.current.vectorData = null
+
+        if (options.repaint ?? true) {
+            triggerRepaint()
+        }
+    }
+
     useEffect(() => {
         loadContext()
 
@@ -273,9 +294,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                     if (id && map.getLayer(id)) map.removeLayer(id)
                     pageContext.current.perPatchCLGId = null
 
-                    const featureIds = Array.from(pageContext.current.selectedVectorFeatureIds!)
-                    drawInstance.delete(featureIds)
-                    pageContext.current.selectedVectorFeatureIds!.clear()
+                    clearUploadedFeaturePreview({ repaint: false })
 
                     pageContext.current.benchmarkCleanup?.()
                     pageContext.current.benchmarkCleanup = null
@@ -293,7 +312,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
         console.log('unloadContext called')
 
-        handleClearUploadedFeature();
+        clearUploadedFeaturePreview({ repaint: false })
         pageContext.current.benchmarkCleanup?.()
         pageContext.current.benchmarkCleanup = null;
 
@@ -306,6 +325,8 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                     const id = pageContext.current.perPatchCLGId
                     if (id && map.getLayer(id)) map.removeLayer(id)
                     pageContext.current.perPatchCLGId = null
+
+                    clearUploadedFeaturePreview({ repaint: false })
 
                     pageContext.current.benchmarkCleanup?.()
                     pageContext.current.benchmarkCleanup = null
@@ -518,10 +539,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                 return
             }
 
-            if (pageContext.current.selectedVectorFeatureIds) {
-                const featureIds = Array.from(pageContext.current.selectedVectorFeatureIds!)
-                drawInstance.delete(featureIds)
-            }
+            clearUploadedFeaturePreview({ repaint: false })
 
             const vectorLockId = dragNodeLockId || null
             pageContext.current.selectedVectorFeatureIds = new Set<string>()
@@ -541,11 +559,10 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             pageContext.current.vectorData = vectorData.data;
             pageContext.current.featuePickResource.name = vectorData.data?.name || pageContext.current.featuePickResource.name;
 
-            (pageContext.current.vectorData.feature_json as GeoJSON.FeatureCollection).features.forEach((feature: GeoJSON.Feature) => pageContext.current.selectedVectorFeatureIds.add(feature.id as string))
-
             try {
                 if (drawInstance) {
-                    drawInstance.add(pageContext.current.vectorData.feature_json as any)
+                    const addedIds = drawInstance.add(pageContext.current.vectorData.feature_json as any) as string[]
+                    addedIds.forEach((id) => pageContext.current.selectedVectorFeatureIds.add(id))
                 }
             } catch (renderErr) {
                 console.warn('Failed to render dragged vector on map:', renderErr)
@@ -561,20 +578,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
     }
 
     const handleClearUploadedFeature = () => {
-        pageContext.current.featuePickResource = null
-
-        try {
-            const featureIds = Array.from(pageContext.current.selectedVectorFeatureIds!)
-            drawInstance.delete(featureIds)
-            pageContext.current.selectedVectorFeatureIds = new Set<string>()
-        } catch (e) {
-            console.warn('Failed to clear draw preview:', e)
-        }
-
-        pageContext.current.vectorLockId = null
-        pageContext.current.vectorData = null
-
-        triggerRepaint()
+        clearUploadedFeaturePreview()
     }
 
     const handleSelectFeaturePick = useCallback(async () => {
