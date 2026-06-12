@@ -92,6 +92,10 @@ interface FeaturePickResource {
 type PatchSelectMode = 'brush' | 'box'
 type TopologyOperationType = 'subdivide' | 'merge' | 'delete' | 'recover' | null
 
+const normalizePatchSelectMode = (mode: unknown): PatchSelectMode => {
+    return mode === 'box' ? 'box' : 'brush'
+}
+
 const getDraggedNodeDisplayName = (payload: { nodeKey?: string, nodeName?: string | null }) => {
     const nodeName = payload.nodeName?.trim()
     if (nodeName) return nodeName
@@ -137,6 +141,44 @@ const topologyOperations = [
     },
 ]
 
+const createInitialPageContext = (): PageContext => ({
+    patch: null,
+    topologyLayer: null,
+    patchCore: null,
+    isChecking: false,
+    editingState: {
+        pick: true,
+        select: 'brush',
+    },
+    vectorLockId: null,
+    vectorData: null,
+    selectedVectorFeatureIds: new Set<string>(),
+    featuePickResource: null,
+    perPatchCLGId: null,
+    benchmarkCleanup: null,
+})
+
+const normalizePageContext = (context: Partial<PageContext> | undefined): PageContext => {
+    const initialContext = createInitialPageContext()
+    if (!context || typeof context !== 'object') {
+        return initialContext
+    }
+
+    const editingState = {
+        pick: context.editingState?.pick ?? initialContext.editingState.pick,
+        select: normalizePatchSelectMode(context.editingState?.select),
+    }
+
+    return {
+        ...initialContext,
+        ...context,
+        editingState,
+        selectedVectorFeatureIds: context.selectedVectorFeatureIds instanceof Set
+            ? context.selectedVectorFeatureIds
+            : initialContext.selectedVectorFeatureIds,
+    }
+}
+
 export default function PatchEdit({ node, context }: PatchEditProps) {
     const mapContext = context as MapViewContext
     const map = mapContext.map!
@@ -144,22 +186,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
     const topologyLayerId = `TopologyLayer:${(node as ResourceNode).nodeInfo}`
 
-    const pageContext = useRef<PageContext>({
-        patch: null,
-        topologyLayer: null,
-        patchCore: null,
-        isChecking: false,
-        editingState: {
-            pick: true,
-            select: 'brush',
-        },
-        vectorLockId: null,
-        vectorData: null,
-        selectedVectorFeatureIds: new Set<string>(),
-        featuePickResource: null,
-        perPatchCLGId: null,
-        benchmarkCleanup: null,
-    })
+    const pageContext = useRef<PageContext>(createInitialPageContext())
 
     const gridInfo = useRef<GridCheckingInfo | null>(null)
 
@@ -176,13 +203,37 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
     const [, triggerRepaint] = useReducer(x => x + 1, 0)
     const [topologyLayerReadyRevision, bumpTopologyLayerReadyRevision] = useReducer(x => x + 1, 0)
+    const userChangedEditingStateRef = useRef(false)
+
+    const getEditingState = useCallback(() => {
+        const editingState = pageContext.current.editingState ?? createInitialPageContext().editingState
+        editingState.pick = typeof editingState.pick === 'boolean' ? editingState.pick : true
+        editingState.select = normalizePatchSelectMode(editingState.select)
+        pageContext.current.editingState = editingState
+        return editingState
+    }, [])
 
     const setPatchSelectMode = useCallback((mode: PatchSelectMode) => {
-        if (checkSwitchOn) return
+        if (pageContext.current.isChecking) return
 
-        pageContext.current!.editingState.select = mode
+        userChangedEditingStateRef.current = true
+        getEditingState().select = mode
         setSelectTab(mode)
-    }, [checkSwitchOn])
+    }, [getEditingState])
+
+    const setPatchPickingMode = useCallback((mode: boolean) => {
+        if (pageContext.current.isChecking) return
+
+        userChangedEditingStateRef.current = true
+        getEditingState().pick = mode
+        setPickingTab(mode)
+    }, [getEditingState])
+
+    const setPatchCheckMode = useCallback((mode: boolean) => {
+        pageContext.current.isChecking = mode
+        setCheckSwitchOn(mode)
+        pageContext.current.topologyLayer?.setCheckMode(mode)
+    }, [])
 
     const clearUploadedFeaturePreview = (options: { repaint?: boolean } = {}) => {
         pageContext.current.featuePickResource = null
@@ -223,7 +274,16 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         }
 
         if ((node as ResourceNode).context !== undefined) {
-            pageContext.current = { ...(node as ResourceNode).context.patch }
+            const storedContext = { ...((node as ResourceNode).context ?? {}) }
+            const activeEditingState = { ...getEditingState() }
+            delete (storedContext as any).__cleanup
+            delete (storedContext as any).topologyLayerId
+            pageContext.current = normalizePageContext(storedContext)
+            if (userChangedEditingStateRef.current) {
+                pageContext.current.editingState = activeEditingState
+            }
+            setPickingTab(pageContext.current.editingState.pick)
+            setSelectTab(pageContext.current.editingState.select)
         }
 
         if ((node as ResourceNode).mountParams === undefined) {
@@ -257,11 +317,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         pageContext.current.patchCore = patchCore
         bumpTopologyLayerReadyRevision()
 
-        setCheckSwitchOn(pageContext.current.isChecking)
-
-        if (pageContext.current.topologyLayer && pageContext.current.isChecking) {
-            pageContext.current.topologyLayer.setCheckMode(pageContext.current.isChecking)
-        }
+        setPatchCheckMode(pageContext.current.isChecking)
 
         pageContext.current.benchmarkCleanup?.()
         pageContext.current.benchmarkCleanup = null
@@ -362,7 +418,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             const y = e.clientY - rect.top
             localMouseDownPos.current = [x, y]
 
-            if (checkSwitchOn) {
+            if (pageContext.current.isChecking) {
                 gridInfo.current = pageContext.current.topologyLayer!.executeCheckCell([x, y])
                 triggerRepaint()
             }
@@ -370,16 +426,17 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
         const onMouseMove = (e: MouseEvent) => {
             if (!e.shiftKey || !localIsMouseDown.current) return
-            if (checkSwitchOn) return
+            if (pageContext.current.isChecking) return
             const rect = canvas.getBoundingClientRect()
             const x = e.clientX - rect.left
             const y = e.clientY - rect.top
             localMouseMovePos.current = [x, y]
+            const { select, pick } = getEditingState()
 
-            if (selectTab === 'brush') {
+            if (select === 'brush') {
                 pageContext.current.topologyLayer!.executePickCells(
-                    selectTab,
-                    pickingTab,
+                    select,
+                    pick,
                     [localMouseMovePos.current[0], localMouseMovePos.current[1]]
                 )
             } else {
@@ -409,23 +466,23 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             }
 
             if (!e.shiftKey) return
-            if (checkSwitchOn) return
+            if (pageContext.current.isChecking) return
 
             const rect = canvas.getBoundingClientRect()
             const x = e.clientX - rect.left
             const y = e.clientY - rect.top
             const localMouseUpPos = [x, y]
+            const { select, pick } = getEditingState()
 
             pageContext.current.topologyLayer!.executePickCells(
-                selectTab,
-                pickingTab,
+                select,
+                pick,
                 [localMouseDownPos.current[0], localMouseDownPos.current[1]],
                 [localMouseUpPos[0], localMouseUpPos[1]]
             )
         }
 
         const onMouseOut = (e: MouseEvent) => {
-            if (checkSwitchOn) return
             if (map) {
                 map.dragPan.enable()
                 map.scrollZoom.enable()
@@ -434,16 +491,20 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                     map.getCanvas().style.cursor = ''
                 }
             }
+            if (pageContext.current.isChecking) return
             if (!e.shiftKey) return
+            if (!localIsMouseDown.current) return
+            localIsMouseDown.current = false
 
             const rect = canvas.getBoundingClientRect()
             const x = e.clientX - rect.left
             const y = e.clientY - rect.top
             const mouseUpPos = [x, y]
+            const { select, pick } = getEditingState()
 
             pageContext.current.topologyLayer!.executePickCells(
-                selectTab,
-                pickingTab,
+                select,
+                pick,
                 [localMouseDownPos.current[0], localMouseDownPos.current[1]],
                 [mouseUpPos[0], mouseUpPos[1]]
             )
@@ -460,7 +521,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             canvas.removeEventListener('mouseup', onMouseUp)
             canvas.removeEventListener('mouseout', onMouseOut)
         }
-    }, [map, selectTab, pickingTab, checkSwitchOn, topologyLayerReadyRevision])
+    }, [map, getEditingState, topologyLayerReadyRevision])
 
     const handleConfirmSelectAll = useCallback(() => {
         setSelectAllDialogOpen(false)
@@ -635,17 +696,17 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
-            if (checkSwitchOn) return
+            if (pageContext.current.isChecking) return
             if (event.ctrlKey || event.metaKey) {
                 const key = event.key.toLowerCase()
 
                 if (key === 'p') {
                     event.preventDefault()
-                    setPickingTab(true)
+                    setPatchPickingMode(true)
                 }
                 if (key === 'u') {
                     event.preventDefault()
-                    setPickingTab(false)
+                    setPatchPickingMode(false)
                 }
                 if (key === 'a') {
                     event.preventDefault()
@@ -714,11 +775,10 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             window.removeEventListener('keydown', handleKeyDown, true)
         }
     }, [
-        setPickingTab,
+        setPatchPickingMode,
         handleConfirmDeleteSelect,
         handleConfirmSelectAll,
         setPatchSelectMode,
-        checkSwitchOn,
         highSpeedMode
     ])
 
@@ -729,15 +789,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
     }, [setPatchSelectMode])
 
     const toggleCheckSwitch = () => {
-        if (checkSwitchOn === pageContext.current!.isChecking) {
-            const newCheckState = !checkSwitchOn
-            setCheckSwitchOn(newCheckState)
-            pageContext.current!.isChecking = newCheckState
-
-            if (pageContext.current!.topologyLayer) {
-                pageContext.current!.topologyLayer.setCheckMode(newCheckState)
-            }
-        }
+        setPatchCheckMode(!pageContext.current.isChecking)
     }
 
     const toggleShowDeletedGridSwitch = () => {
@@ -1006,7 +1058,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                     <AlertDialogFooter>
                                         <AlertDialogCancel
                                             className='cursor-pointer'
-                                            onClick={() => { setPickingTab(true) }}
+                                            onClick={() => { setPatchPickingMode(true) }}
                                         >
                                             Cancel
                                         </AlertDialogCancel>
@@ -1035,7 +1087,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                     <AlertDialogFooter>
                                         <AlertDialogCancel
                                             className='cursor-pointer'
-                                            onClick={() => { setPickingTab(true) }}
+                                            onClick={() => { setPatchPickingMode(true) }}
                                         >
                                             Cancel
                                         </AlertDialogCancel>
@@ -1116,7 +1168,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                         <button
                                             className={`flex-1 py-2 px-3 rounded-md transition-colors text-white duration-200 flex flex-col text-sm justify-center items-center ${checkSwitchOn ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} 
                                                             ${pickingTab === true ? 'bg-gray-600 ' : 'bg-transparent hover:bg-gray-500'}`}
-                                            onClick={() => { !checkSwitchOn && setPickingTab(true) }}
+                                            onClick={() => { !checkSwitchOn && setPatchPickingMode(true) }}
                                             disabled={checkSwitchOn}
                                         >
                                             <div className='flex flex-row gap-1 items-center'>
@@ -1130,7 +1182,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                         <button
                                             className={`flex-1 py-2 px-3 rounded-md transition-colors text-white duration-200 flex flex-col text-sm justify-center items-center ${checkSwitchOn ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} 
                                                             ${pickingTab === false ? 'bg-gray-700 ' : 'bg-transparent hover:bg-gray-500'}`}
-                                            onClick={() => { !checkSwitchOn && setPickingTab(false) }}
+                                            onClick={() => { !checkSwitchOn && setPatchPickingMode(false) }}
                                             disabled={checkSwitchOn}
                                         >
                                             <div className='flex flex-row gap-1 items-center'>
