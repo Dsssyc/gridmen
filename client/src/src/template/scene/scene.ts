@@ -215,12 +215,6 @@ export class ResourceTree implements IResourceTree {
         this.notifyDomUpdate()
     }
 
-    selectNode(node: IResourceNode): void {
-        this.selectedNode = node
-        this.handleNodeClick(node)
-        this.notifyDomUpdate()
-    }
-
     /**
      * Create a temporary node purely in memory (no backend call).
      * NOTE: Any later refresh/align from backend may overwrite the in-memory structure.

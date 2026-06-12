@@ -40,12 +40,14 @@ interface NodeRendererProps {
     setShowNewResourceInfo?: (v: boolean) => void
     showNewFolderInput?: boolean
     setShowNewFolderInput?: (v: boolean) => void
+    onExplorerNodeSelect: (node: IResourceNode) => void
 }
 
 interface TreeRendererProps {
     title: string
     resourceTree: ResourceTree | null
     triggerFocus: number
+    onExplorerNodeSelect: (node: IResourceNode) => void
 }
 
 function CreationBar({ resourceTree, onCreated, onCancel }: { resourceTree: ResourceTree, onCreated?: () => void, onCancel?: () => void }) {
@@ -275,33 +277,41 @@ const NodeRenderer = ({
     setShowNewResourceInfo,
     showNewFolderInput,
     setShowNewFolderInput,
+    onExplorerNodeSelect,
 }: NodeRendererProps) => {
 
     const tree = node.tree as ResourceTree
 
     const isFolder = node.template_name === 'default'
-    const isSelected = tree.selectedNode?.id === node.id
 
-    const { setSelectedNodeKey } = useSelectedNodeStore()
+    const { selectedNodeKey, setSelectedNodeKey } = useSelectedNodeStore()
+    const isSelected = selectedNodeKey === node.key
 
     const nodeRef = useRef<HTMLDivElement>(null)
     const [isDragOver, setIsDragOver] = useState(false)
 
     const handleClickNode = useCallback(() => {
-        useToolPanelStore.getState().setActiveTab(node.isTemp ? 'create' : 'check')
+        if (!isFolder && !node.isTemp) {
+            onExplorerNodeSelect(node)
+            return
+        }
+
+        if (node.isTemp) {
+            useToolPanelStore.getState().setActiveTab('create')
+        }
 
         void tree.clickNode(node)
-    }, [node, tree])
+    }, [isFolder, node, onExplorerNodeSelect, tree])
 
     const handleContextMenu = useCallback(() => {
-        tree.selectNode(node)
-    }, [node, tree])
+        setSelectedNodeKey(node.key)
+    }, [node.key, setSelectedNodeKey])
 
     const handleOpenContextMenu = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault()
         e.stopPropagation()
 
-        tree.selectNode(node)
+        setSelectedNodeKey(node.key)
 
         nodeRef.current?.dispatchEvent(new window.MouseEvent('contextmenu', {
             bubbles: true,
@@ -311,7 +321,7 @@ const NodeRenderer = ({
             clientX: e.clientX,
             clientY: e.clientY,
         }))
-    }, [node, tree])
+    }, [node.key, setSelectedNodeKey])
 
     const handleNodeMenu = useCallback((node: IResourceNode, menuItem: any) => {
         if (menuItem === 'New Resource' || menuItem === 'New Folder') {
@@ -580,6 +590,7 @@ const NodeRenderer = ({
                             setShowNewResourceInfo={setShowNewResourceInfo}
                             showNewFolderInput={showNewFolderInput}
                             setShowNewFolderInput={setShowNewFolderInput}
+                            onExplorerNodeSelect={onExplorerNodeSelect}
                         />
                     ))}
                 </div>
@@ -588,7 +599,7 @@ const NodeRenderer = ({
     )
 }
 
-const TreeRenderer = ({ title, resourceTree, triggerFocus }: TreeRendererProps) => {
+const TreeRenderer = ({ title, resourceTree, triggerFocus, onExplorerNodeSelect }: TreeRendererProps) => {
 
     const [showNewResourceInfo, setShowNewResourceInfo] = useState<boolean>(false)
     const [showNewFolderInput, setShowNewFolderInput] = useState<boolean>(false)
@@ -772,6 +783,7 @@ const TreeRenderer = ({ title, resourceTree, triggerFocus }: TreeRendererProps) 
                         setShowNewResourceInfo={setShowNewResourceInfo}
                         showNewFolderInput={showNewFolderInput}
                         setShowNewFolderInput={setShowNewFolderInput}
+                        onExplorerNodeSelect={onExplorerNodeSelect}
                     />
                 ))}
             </div>
@@ -804,6 +816,18 @@ export default function ResourceTreeComponent({
 
     const [, triggerRepaint] = useReducer(x => x + 1, 0)
     const { setSelectedNodeKey } = useSelectedNodeStore()
+
+    const handleExplorerNodeSelect = useCallback((node: IResourceNode) => {
+        if (privateTree) {
+            privateTree.selectedNode = null
+            privateTree.notifyDomUpdate()
+        }
+        if (publicTree) {
+            publicTree.selectedNode = null
+            publicTree.notifyDomUpdate()
+        }
+        setSelectedNodeKey(node.key)
+    }, [privateTree, publicTree, setSelectedNodeKey])
 
     const handleNodeRemoveWithTempReset = useCallback((node: IResourceNode) => {
         if (node?.isTemp) {
@@ -866,9 +890,19 @@ export default function ResourceTreeComponent({
                 </div>
                 {/* WorkSpace */}
                 <div className="flex-1 min-h-0 flex flex-col">
-                    <TreeRenderer resourceTree={privateTree} title={"WorkSpace"} triggerFocus={triggerFocus} />
+                    <TreeRenderer
+                        resourceTree={privateTree}
+                        title={"WorkSpace"}
+                        triggerFocus={triggerFocus}
+                        onExplorerNodeSelect={handleExplorerNodeSelect}
+                    />
                     {/* <Separator className='bg-[#585858] w-full shrink-0' />
-                    <TreeRenderer resourceTree={publicTree} title={"Public"} triggerFocus={triggerFocus} /> */}
+                    <TreeRenderer
+                        resourceTree={publicTree}
+                        title={"Public"}
+                        triggerFocus={triggerFocus}
+                        onExplorerNodeSelect={handleExplorerNodeSelect}
+                    /> */}
                 </div>
             </div>
         </div>
