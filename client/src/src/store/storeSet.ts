@@ -3,6 +3,7 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 import { Layer, LayerGroupStore, LayerStore, SelectedNodeStore, SettingsProps, TempNewNodeProps, ToolPanelStore } from "./storeTypes"
 import { ResourceNode } from '@/template/scene/scene'
 import { getEnvMapboxAccessToken } from '@/utils/mapboxToken'
+import { GRIDMEN_SETTINGS_STORAGE_KEY } from '@/utils/apiBaseUrl'
 
 export const DEFAULT_LEAD_IP = 'http://127.0.0.1:8001'
 
@@ -14,11 +15,13 @@ export const useSettingStore = create<SettingsProps>()(
     persist(
         (set) => ({
             publicIP: DEFAULT_LEAD_IP,
+            apiBaseUrlOverride: '',
             highSpeedMode: false,
             mapboxAccessToken: DEFAULT_MAPBOX_ACCESS_TOKEN,
             mapInitialLongitude: DEFAULT_MAP_INITIAL_LONGITUDE,
             mapInitialLatitude: DEFAULT_MAP_INITIAL_LATITUDE,
             setLeadIP: (leadIP: string) => set({ publicIP: leadIP }),
+            setApiBaseUrlOverride: (apiBaseUrlOverride: string) => set({ apiBaseUrlOverride }),
             setHighSpeedMode: (highSpeedMode: boolean) => set({ highSpeedMode }),
             setMapboxAccessToken: (mapboxAccessToken: string) => set({ mapboxAccessToken }),
             setMapInitialLongitude: (lng: number) => set({ mapInitialLongitude: lng }),
@@ -26,10 +29,11 @@ export const useSettingStore = create<SettingsProps>()(
             setMapInitialCenter: (lng: number, lat: number) => set({ mapInitialLongitude: lng, mapInitialLatitude: lat }),
         }),
         {
-            name: 'gridmen:settings',
+            name: GRIDMEN_SETTINGS_STORAGE_KEY,
             storage: createJSONStorage(() => localStorage),
             partialize: (state) => ({
                 publicIP: state.publicIP,
+                apiBaseUrlOverride: state.apiBaseUrlOverride,
                 highSpeedMode: state.highSpeedMode,
                 mapboxAccessToken: state.mapboxAccessToken,
                 mapInitialLongitude: state.mapInitialLongitude,
