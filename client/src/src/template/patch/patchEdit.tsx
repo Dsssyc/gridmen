@@ -175,6 +175,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
     const [activeTopologyOperation, setActiveTopologyOperation] = useState<TopologyOperationType>(null)
 
     const [, triggerRepaint] = useReducer(x => x + 1, 0)
+    const [topologyLayerReadyRevision, bumpTopologyLayerReadyRevision] = useReducer(x => x + 1, 0)
 
     const setPatchSelectMode = useCallback((mode: PatchSelectMode) => {
         if (checkSwitchOn) return
@@ -254,6 +255,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         pageContext.current.topologyLayer = gridLayer
         gridLayer.patchCore = patchCore
         pageContext.current.patchCore = patchCore
+        bumpTopologyLayerReadyRevision()
 
         setCheckSwitchOn(pageContext.current.isChecking)
 
@@ -458,7 +460,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             canvas.removeEventListener('mouseup', onMouseUp)
             canvas.removeEventListener('mouseout', onMouseOut)
         }
-    }, [map, selectTab, pickingTab, checkSwitchOn])
+    }, [map, selectTab, pickingTab, checkSwitchOn, topologyLayerReadyRevision])
 
     const handleConfirmSelectAll = useCallback(() => {
         setSelectAllDialogOpen(false)
