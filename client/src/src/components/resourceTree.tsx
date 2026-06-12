@@ -288,9 +288,7 @@ const NodeRenderer = ({
     const [isDragOver, setIsDragOver] = useState(false)
 
     const handleClickNode = useCallback(() => {
-        if (node.isTemp) {
-            useToolPanelStore.getState().setActiveTab('create')
-        }
+        useToolPanelStore.getState().setActiveTab(node.isTemp ? 'create' : 'check')
 
         void tree.clickNode(node)
     }, [node, tree])
