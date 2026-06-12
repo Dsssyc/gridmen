@@ -467,15 +467,14 @@ const NodeRenderer = ({
     }, [isSelected, triggerFocus])
 
     return (
-        <div>
+        <div className='w-full'>
             <ContextMenu>
                 <ContextMenuTrigger asChild>
                     <div
                         ref={nodeRef}
                         className={cn(
-                            'group flex h-6 w-full cursor-pointer select-none items-center text-sm hover:bg-gray-700',
-                            isSelected ? 'bg-gray-600 text-white' : 'text-gray-300',
-                            isFolder && isDragOver && 'bg-gray-500/50',
+                            'group relative flex h-6 w-full cursor-pointer select-none items-center overflow-hidden text-sm',
+                            isSelected ? 'text-white' : 'text-gray-300',
                         )}
                         data-node-type={isFolder ? 'folder' : 'file'}
                         onClick={handleClickNode}
@@ -487,7 +486,17 @@ const NodeRenderer = ({
                         onDrop={(e) => { handleDrop(e) }}
                     >
                         <div
-                            className='flex min-w-0 flex-1 items-center pr-1'
+                            className={cn(
+                                'pointer-events-none absolute inset-y-0 left-0 right-0',
+                                isFolder && isDragOver
+                                    ? 'bg-gray-500/50'
+                                    : isSelected
+                                        ? 'bg-gray-600'
+                                        : 'group-hover:bg-gray-700',
+                            )}
+                        />
+                        <div
+                            className='relative z-10 flex min-w-0 flex-1 items-center pr-1'
                             style={{ paddingLeft: `${depth * 10 + 6}px` }}
                         >
                             {isFolder ? (
@@ -530,7 +539,7 @@ const NodeRenderer = ({
                             type='button'
                             aria-label={`Open actions for ${node.name}`}
                             className={cn(
-                                'mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-gray-400 opacity-0 outline-none transition-opacity hover:bg-gray-600 hover:text-white focus:opacity-100 focus:ring-1 focus:ring-gray-500',
+                                'relative z-10 mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-gray-400 opacity-0 outline-none transition-opacity hover:bg-gray-600 hover:text-white focus:opacity-100 focus:ring-1 focus:ring-gray-500',
                                 (isSelected ? 'opacity-100' : 'group-hover:opacity-100')
                             )}
                             draggable={false}
