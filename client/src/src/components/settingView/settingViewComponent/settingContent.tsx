@@ -61,6 +61,7 @@ export default function SettingContent({ activeCategory }: SettingContentProps) 
     const apiBaseUrlSource = getApiBaseUrlSource(apiBaseUrlOverride)
     const apiBaseUrlSourceLabel = (() => {
         if (apiBaseUrlSource === 'settings') return 'settings override'
+        if (apiBaseUrlSource === 'runtime') return 'runtime override'
         if (apiBaseUrlSource === 'env') return apiBaseUrlEnvNames.join(' / ')
         return 'default'
     })()

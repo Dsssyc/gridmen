@@ -62,31 +62,33 @@ export default class GridCore {
             this.renderRelativeCenter = new Float32Array([...centerX, ...centerY])
 
             // Brodcast actors to init patch manager and initialize patch cache
-            this._dispatcher.broadcast('setGridManager', this.context, () => {
-                // Get block metadata
-                apis.grid.getGridBlockMeta(this.nodeInfo, this._lockId).then((blockMeta: GridBlockMetaInfo) => {
-                    const blockNum = blockMeta.blockExtents.length / 4
-                    for (let i = 0; i < blockNum; i++) {
-                        const xMin = blockMeta.blockExtents[i * 4 + 0]
-                        const yMin = blockMeta.blockExtents[i * 4 + 1]
-                        const xMax = blockMeta.blockExtents[i * 4 + 2]
-                        const yMax = blockMeta.blockExtents[i * 4 + 3]
+            this._dispatcher.syncApiBaseUrl(() => {
+                this._dispatcher.broadcast('setGridManager', this.context, () => {
+                    // Get block metadata
+                    apis.grid.getGridBlockMeta(this.nodeInfo, this._lockId).then((blockMeta: GridBlockMetaInfo) => {
+                        const blockNum = blockMeta.blockExtents.length / 4
+                        for (let i = 0; i < blockNum; i++) {
+                            const xMin = blockMeta.blockExtents[i * 4 + 0]
+                            const yMin = blockMeta.blockExtents[i * 4 + 1]
+                            const xMax = blockMeta.blockExtents[i * 4 + 2]
+                            const yMax = blockMeta.blockExtents[i * 4 + 3]
 
-                        // Transform to target CRS
-                        const targetBL = proj4(this.srcCRS, this.targetCRS, [xMin, yMin])
-                        const targetBR = proj4(this.srcCRS, this.targetCRS, [xMax, yMin])
-                        const targetTL = proj4(this.srcCRS, this.targetCRS, [xMin, yMax])
-                        const targetTR = proj4(this.srcCRS, this.targetCRS, [xMax, yMax])
+                            // Transform to target CRS
+                            const targetBL = proj4(this.srcCRS, this.targetCRS, [xMin, yMin])
+                            const targetBR = proj4(this.srcCRS, this.targetCRS, [xMax, yMin])
+                            const targetTL = proj4(this.srcCRS, this.targetCRS, [xMin, yMax])
+                            const targetTR = proj4(this.srcCRS, this.targetCRS, [xMax, yMax])
 
-                        this.blockExtents.push(...[
-                            targetBL[0], targetBL[1],
-                            targetBR[0], targetBR[1],
-                            targetTL[0], targetTL[1],
-                            targetTR[0], targetTR[1],
-                        ])
-                    }
+                            this.blockExtents.push(...[
+                                targetBL[0], targetBL[1],
+                                targetBR[0], targetBR[1],
+                                targetTL[0], targetTL[1],
+                                targetTR[0], targetTR[1],
+                            ])
+                        }
+                    })
+                    callback && callback()
                 })
-                callback && callback()
             })
         })
     }

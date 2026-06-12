@@ -21,13 +21,14 @@ export const getGridBlockMeta = async (nodeInfo: string, _lockId?: string | null
 }
 
 export const exportGridTopo = async (nodeInfo: string, targetPath: string): Promise<BaseResponse> => {
-    const response = await fetch(`${API_PREFIX}/export`, {
+    const { address, nodeKey } = decodeNodeInfo(nodeInfo)
+    const response = await fetch(`${address}${API_PREFIX}/export`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            node_key: nodeInfo,
+            node_key: nodeKey,
             target_path: targetPath
         })
     })

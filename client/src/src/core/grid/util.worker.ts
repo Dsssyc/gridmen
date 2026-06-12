@@ -1,6 +1,7 @@
 import GridManager from './gridManager'
 import PatchManager from './patchManager'
 import * as api from '@/template/api/apis'
+import { setRuntimeApiBaseUrlOverride } from '@/utils/apiBaseUrl'
 import { Callback, WorkerSelf } from '../types'
 import { PatchContext, GridContext, MultiCellBaseInfo } from './types'
 
@@ -8,6 +9,14 @@ const DELETED_FLAG = 1
 const UNDELETED_FLAG = 0
 
 type WorkerContext = WorkerSelf & Record<'patchManager', PatchManager> & Record<'gridManager', GridManager>
+
+export function setApiBaseUrlForWorker(
+    apiBaseUrl: string | null,
+    callback: Callback<any>
+) {
+    setRuntimeApiBaseUrlOverride(apiBaseUrl)
+    callback()
+}
 
 export function setPatchManager(
     this: WorkerContext,

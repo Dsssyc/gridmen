@@ -2,7 +2,9 @@ export const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000'
 export const GRIDMEN_SETTINGS_STORAGE_KEY = 'gridmen:settings'
 export const apiBaseUrlEnvNames = ['VITE_API_BASE_URL', 'VITE_LOCAL_API_URL'] as const
 
-export type ApiBaseUrlSource = 'settings' | 'env' | 'default'
+export type ApiBaseUrlSource = 'settings' | 'runtime' | 'env' | 'default'
+
+let runtimeApiBaseUrlOverride = ''
 
 export function normalizeApiBaseUrl(value: string | null | undefined): string | null {
     const raw = String(value ?? '').trim()
@@ -25,12 +27,26 @@ export function getEnvApiBaseUrl(): string | null {
     )
 }
 
+export function setRuntimeApiBaseUrlOverride(value: string | null | undefined): void {
+    runtimeApiBaseUrlOverride = value ?? ''
+}
+
+export function getRuntimeApiBaseUrlOverride(): string {
+    return runtimeApiBaseUrlOverride
+}
+
 export function getEffectiveApiBaseUrl(settingsOverride?: string | null): string {
-    return normalizeApiBaseUrl(settingsOverride) ?? getEnvApiBaseUrl() ?? DEFAULT_API_BASE_URL
+    return (
+        normalizeApiBaseUrl(settingsOverride) ??
+        normalizeApiBaseUrl(runtimeApiBaseUrlOverride) ??
+        getEnvApiBaseUrl() ??
+        DEFAULT_API_BASE_URL
+    )
 }
 
 export function getApiBaseUrlSource(settingsOverride?: string | null): ApiBaseUrlSource {
     if (normalizeApiBaseUrl(settingsOverride)) return 'settings'
+    if (normalizeApiBaseUrl(runtimeApiBaseUrlOverride)) return 'runtime'
     if (getEnvApiBaseUrl()) return 'env'
     return 'default'
 }
