@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Gridmen workspace root",
   "scripts": {
+    "clear": "node scripts/clear.mjs",
     "doctor": "node scripts/doctor.mjs",
     "setup": "node scripts/setup.mjs",
     "start": "node scripts/start.mjs",
