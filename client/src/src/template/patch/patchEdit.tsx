@@ -1187,7 +1187,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                                 Brush
                                             </div>
                                             <div className={`text-xs ${selectTab === 'brush' && 'text-white'} `}>
-                                                [ Ctrl/Cmd+1 ]
+                                                [ Ctrl+1 ]
                                             </div>
                                         </button>
                                         <button
@@ -1201,7 +1201,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                                 Box
                                             </div>
                                             <div className={`text-xs ${selectTab === 'box' && 'text-white'} `}>
-                                                [ Ctrl/Cmd+2 ]
+                                                [ Ctrl+2 ]
                                             </div>
                                         </button>
                                     </div>
