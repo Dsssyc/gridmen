@@ -35,6 +35,12 @@ import type { IViewContext } from "@/views/IViewContext"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { addVectorDisplay, tagVectorColor, VectorDisplayHandle } from "@/views/mapView/vectorDisplayLayer"
 import { layerOrderCoordinator } from "@/views/mapView/layerOrderCoordinator"
+import {
+    VECTOR_DRAFT_LINE_MODE,
+    VECTOR_DRAFT_POLYGON_MODE,
+    type VectorDraftModeController,
+} from "./vectorDraftDrawModes"
+import type { VectorDraftSnapshot } from "./vectorDraftUndoManager"
 
 interface VectorEditProps {
     node: IResourceNode
@@ -52,6 +58,7 @@ interface PageContext {
     }
     editedVectorIds: Set<string>
     displayHandle: VectorDisplayHandle | null
+    draftSnapshot: VectorDraftSnapshot | null
 }
 
 const vectorTips = [
@@ -66,9 +73,9 @@ const getDrawInstanceModeByType = (type: "Point" | "Line" | "Polygon") => {
         case "Point":
             return "draw_point"
         case "Line":
-            return "draw_line_string"
+            return VECTOR_DRAFT_LINE_MODE
         case "Polygon":
-            return "draw_polygon"
+            return VECTOR_DRAFT_POLYGON_MODE
         default:
             return "simple_select"
     }
@@ -89,6 +96,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
     const mapContext = context as MapViewContext
     const map = mapContext.map!
     const drawInstance = mapContext.drawInstance!
+    const panelLayerId = node.key
 
     const pageContext = useRef<PageContext>({
         drawVector: null,
@@ -101,8 +109,10 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
         },
         editedVectorIds: new Set<string>(),
         displayHandle: null,
+        draftSnapshot: null,
     })
 
+    const draftController = useRef<VectorDraftModeController>({ current: null })
     const [, triggerRepaint] = useReducer((x) => x + 1, 0)
 
     const getNodeFeatures = (): GeoJSON.FeatureCollection => {
@@ -117,6 +127,89 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
             type: 'FeatureCollection',
             features: nodeFeatures
         }
+    }
+
+    const getDraftTypeByVectorType = (type: PageContext['vectorData']['type']) => {
+        if (type === 'Line') return 'line'
+        if (type === 'Polygon') return 'polygon'
+        return null
+    }
+
+    const handleDraftChange = (snapshot: VectorDraftSnapshot | null) => {
+        pageContext.current.draftSnapshot = snapshot
+        triggerRepaint()
+    }
+
+    const startDrawMode = (snapshot?: VectorDraftSnapshot | null) => {
+        const vectorType = pageContext.current.vectorData.type
+        const drawInstanceMode = getDrawInstanceModeByType(vectorType)
+        const draftType = getDraftTypeByVectorType(vectorType)
+
+        if (!draftType) {
+            pageContext.current.draftSnapshot = null
+            draftController.current.current = null
+            ; (drawInstance as any).changeMode(drawInstanceMode)
+            return
+        }
+
+        const draftSnapshot =
+            snapshot?.type === draftType
+                ? snapshot
+                : pageContext.current.draftSnapshot?.type === draftType
+                    ? pageContext.current.draftSnapshot
+                    : null
+
+        ; (drawInstance as any).changeMode(drawInstanceMode, {
+            snapshot: draftSnapshot,
+            controller: draftController.current,
+            color: getHexColorByValue(pageContext.current.vectorData.color),
+            onDraftChange: handleDraftChange,
+        })
+    }
+
+    const pauseActiveDraft = () => {
+        const activeDraft = draftController.current.current
+        if (!activeDraft) return false
+        if (activeDraft.snapshot().coordinates.length === 0) {
+            activeDraft.cancel()
+            return true
+        }
+        activeDraft.pause()
+        return true
+    }
+
+    const finalizeActiveDraftForSave = () => {
+        const activeDraft = draftController.current.current
+        if (!activeDraft) return true
+
+        if (activeDraft.snapshot().coordinates.length === 0) {
+            activeDraft.cancel()
+            return true
+        }
+
+        if (!activeDraft.canFinalize()) {
+            toast.error('Current vector draft is not complete. Finish or cancel it before saving.')
+            return false
+        }
+
+        pageContext.current.drawingMode = 'select'
+        activeDraft.finalize()
+        return true
+    }
+
+    const canUndoDraft = () => pageContext.current.drawingMode === 'draw' && draftController.current.current?.canUndo() === true
+    const canRedoDraft = () => pageContext.current.drawingMode === 'draw' && draftController.current.current?.canRedo() === true
+
+    const handleUndoDraft = () => {
+        if (!canUndoDraft()) return
+        draftController.current.current?.undo()
+        triggerRepaint()
+    }
+
+    const handleRedoDraft = () => {
+        if (!canRedoDraft()) return
+        draftController.current.current?.redo()
+        triggerRepaint()
     }
 
     useEffect(() => {
@@ -139,6 +232,11 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
             (node as ResourceNode).mountParams = vectorInfo.data
         }
 
+        const existingContext = (node as ResourceNode).context as Partial<PageContext> | undefined
+        if (existingContext?.draftSnapshot) {
+            pageContext.current.draftSnapshot = existingContext.draftSnapshot
+        }
+
         console.log(drawInstance)
 
         pageContext.current.vectorData.type = (node as ResourceNode).mountParams.feature_json?.features[0]?.geometry.type
@@ -153,7 +251,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
         const handle = addVectorDisplay(map, node.nodeInfo, fcCopy)
         handle.setVisible(false)
         pageContext.current.displayHandle = handle
-        layerOrderCoordinator.register(node.nodeInfo, handle.mapboxLayerIds)
+        layerOrderCoordinator.register(panelLayerId, handle.mapboxLayerIds)
 
         const addedIds = drawInstance.add(pageContext.current.drawVector!) as string[]
         addedIds.forEach((id) => pageContext.current.editedVectorIds.add(id))
@@ -161,6 +259,11 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
         for (const fid of pageContext.current.editedVectorIds) {
             drawInstance.setFeatureProperty(fid, "color", hex)
         };
+
+        if (pageContext.current.draftSnapshot) {
+            pageContext.current.drawingMode = 'draw'
+            startDrawMode(pageContext.current.draftSnapshot)
+        }
 
         (node as ResourceNode).context = {
             ...((node as ResourceNode).context ?? {}),
@@ -180,7 +283,9 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                     }
                     drawInstance.delete(featureIds)
                     pageContext.current.editedVectorIds.clear()
-                    layerOrderCoordinator.unregister(node.nodeInfo);
+                    pageContext.current.draftSnapshot = null
+                    draftController.current.current = null
+                    layerOrderCoordinator.unregister(panelLayerId);
                     (node as ResourceNode).mountParams = undefined
                 }
             },
@@ -191,7 +296,10 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
 
     const unloadContext = () => {
         if (drawInstance) {
-            (drawInstance as any).changeMode('simple_select');
+            const draftPaused = pauseActiveDraft()
+            if (!draftPaused) {
+                (drawInstance as any).changeMode('simple_select');
+            }
         }
         (node as ResourceNode).context = {
             ...pageContext.current,
@@ -211,7 +319,9 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                     }
                     drawInstance.delete(featureIds)
                     pageContext.current.editedVectorIds.clear()
-                    layerOrderCoordinator.unregister(node.nodeInfo)
+                    pageContext.current.draftSnapshot = null
+                    draftController.current.current = null
+                    layerOrderCoordinator.unregister(panelLayerId)
                 }
             },
         }
@@ -237,8 +347,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
             triggerRepaint()
 
             if (pageContext.current.drawingMode === "draw") {
-                const drawInstanceMode = getDrawInstanceModeByType(pageContext.current.vectorData.type);
-                setTimeout(() => (drawInstance as any).changeMode(drawInstanceMode), 0)
+                setTimeout(() => startDrawMode(), 0)
             }
         }
 
@@ -283,15 +392,19 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
 
     const handleClickDraw = () => {
         pageContext.current.drawingMode = "draw"
-        const drawInstanceMode = getDrawInstanceModeByType(pageContext.current.vectorData.type);
-        (drawInstance as any).changeMode(drawInstanceMode)
+        startDrawMode()
 
         triggerRepaint()
     }
 
     const handleClickSelect = () => {
         pageContext.current.drawingMode = "select";
-        (drawInstance as any).changeMode('simple_select')
+        const activeDraft = draftController.current.current
+        if (activeDraft) {
+            activeDraft.finalize()
+        } else {
+            (drawInstance as any).changeMode('simple_select')
+        }
 
         triggerRepaint()
     }
@@ -315,21 +428,37 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
 
         const handleKeyDown = (event: KeyboardEvent) => {
             if (event.defaultPrevented) return
+            if (isEditableTarget(event.target)) return
 
             if (event.ctrlKey || event.metaKey) {
-                if (event.key === "D" || event.key === "d") {
+                const key = event.key.toLowerCase()
+                if (key === 'z' && event.shiftKey) {
+                    event.preventDefault()
+                    handleRedoDraft()
+                    return
+                }
+                if (key === 'z') {
+                    event.preventDefault()
+                    handleUndoDraft()
+                    return
+                }
+                if (key === 'y') {
+                    event.preventDefault()
+                    handleRedoDraft()
+                    return
+                }
+                if (key === "d") {
                     event.preventDefault()
                     handleClickDraw()
                     return
                 }
-                if (event.key === "S" || event.key === "s") {
+                if (key === "s") {
                     event.preventDefault()
                     handleClickSelect()
                     return
                 }
             }
             if (event.key === "Delete") {
-                if (isEditableTarget(event.target)) return
                 event.preventDefault()
                 handleDeleteSelected()
             }
@@ -337,7 +466,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
 
         window.addEventListener("keydown", handleKeyDown)
         return () => window.removeEventListener("keydown", handleKeyDown)
-    }, [handleClickSelect, handleDeleteSelected])
+    })
 
     const handleUpdateVector = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault()
@@ -354,10 +483,12 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
             return
         }
 
+        if (!finalizeActiveDraftForSave()) return
+
         const updateData = {
             color: pageContext.current.vectorData.color,
             epsg: pageContext.current.vectorData.epsg,
-            feature_json: pageContext.current.drawVector!,
+            feature_json: getNodeFeatures(),
         }
 
         pageContext.current.drawingMode = 'select';
@@ -443,12 +574,26 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                             <div>
                                 <h3 className="text-white font-semibold mb-2">Operations</h3>
                                 <div className="grid grid-cols-3 gap-2">
-                                    <button className="bg-slate-700/50 hover:bg-slate-400/50 border border-slate-600 text-white px-2 py-1 rounded-lg font-medium flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer">
+                                    <button
+                                        onClick={handleUndoDraft}
+                                        disabled={!canUndoDraft()}
+                                        className={`${canUndoDraft()
+                                            ? "bg-slate-700/50 hover:bg-slate-400/50 cursor-pointer"
+                                            : "bg-slate-700/50 opacity-50 cursor-not-allowed"}
+                                                border border-slate-600 text-white px-2 py-1 rounded-lg font-medium flex flex-col items-center justify-center gap-0.5 transition-all`}
+                                    >
                                         <Undo2 className="h-4 w-4" />
                                         <span>Undo</span>
                                         <span className="text-xs opacity-80">[ Ctrl+Z ]</span>
                                     </button>
-                                    <button className="bg-slate-700/50 hover:bg-slate-400/50 border border-slate-600 text-white px-2 py-1 rounded-lg font-medium flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer">
+                                    <button
+                                        onClick={handleRedoDraft}
+                                        disabled={!canRedoDraft()}
+                                        className={`${canRedoDraft()
+                                            ? "bg-slate-700/50 hover:bg-slate-400/50 cursor-pointer"
+                                            : "bg-slate-700/50 opacity-50 cursor-not-allowed"}
+                                                border border-slate-600 text-white px-2 py-1 rounded-lg font-medium flex flex-col items-center justify-center gap-0.5 transition-all`}
+                                    >
                                         <Redo2 className="h-4 w-4" />
                                         <span>Redo</span>
                                         <span className="text-xs opacity-80">[ Ctrl+Y ]</span>
@@ -520,6 +665,7 @@ export default function VectorEdit({ node, context }: VectorEditProps) {
                                         onValueChange={(value: any) => {
                                             pageContext.current.vectorData.color = value
                                             const hex = getHexColorByValue(value)
+                                            draftController.current.current?.setColor(hex)
                                             for (const fid of pageContext.current.editedVectorIds) {
                                                 drawInstance.setFeatureProperty(fid, "color", hex)
                                             }

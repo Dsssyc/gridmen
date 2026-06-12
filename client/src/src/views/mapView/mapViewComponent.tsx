@@ -6,6 +6,12 @@ import MapboxDraw from '@mapbox/mapbox-gl-draw'
 import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css'
 // @ts-expect-error no declare file for rectangle mode
 import DrawRectangle from 'mapbox-gl-draw-rectangle-mode'
+import {
+    VECTOR_DRAFT_LINE_MODE,
+    VECTOR_DRAFT_POLYGON_MODE,
+    VectorDraftLineMode,
+    VectorDraftPolygonMode,
+} from '@/template/vector/vectorDraftDrawModes'
 import ToolPanel from './toolPanel'
 import LayerGroup from './layerGroup'
 import 'mapbox-gl/dist/mapbox-gl.css'
@@ -175,7 +181,9 @@ const MapContainer = forwardRef<HTMLDivElement, MapContainerProps>(({ onMapLoad,
                     userProperties: true,
                     modes: {
                         ...MapboxDrawAny.modes,
-                        draw_rectangle: DrawRectangle
+                        draw_rectangle: DrawRectangle,
+                        [VECTOR_DRAFT_LINE_MODE]: VectorDraftLineMode,
+                        [VECTOR_DRAFT_POLYGON_MODE]: VectorDraftPolygonMode,
                     },
                     styles: [
                         // Active point style

@@ -55,6 +55,7 @@ export default function VectorCheck({ node, context }: VectorCheckProps) {
     const mapContext = context as MapViewContext
     const map = mapContext.map!
     const drawInstance = mapContext.drawInstance!
+    const panelLayerId = node.key
 
     const pageContext = useRef<PageContext>({
         drawVector: null,
@@ -80,7 +81,7 @@ export default function VectorCheck({ node, context }: VectorCheckProps) {
     const loadContext = async () => {
         if (!(node as ResourceNode).lockId) {
             store.get<{ on: Function, off: Function }>('isLoading')!.on()
-            const linkResponse = await linkNode("gridmen/IVector/1.0.0", node.nodeInfo, "w");
+            const linkResponse = await linkNode("gridmen/IVector/1.0.0", node.nodeInfo, "r");
             (node as ResourceNode).lockId = linkResponse.lock_id
             store.get<{ on: Function, off: Function }>('isLoading')!.off()
         }
@@ -101,8 +102,9 @@ export default function VectorCheck({ node, context }: VectorCheckProps) {
         const fcCopy: GeoJSON.FeatureCollection = JSON.parse(JSON.stringify(pageContext.current.drawVector!))
         tagVectorColor(fcCopy, hex)
         const handle = addVectorDisplay(map, node.nodeInfo, fcCopy)
+        handle.setVisible(true)
         pageContext.current.displayHandle = handle;
-        layerOrderCoordinator.register(node.nodeInfo, handle.mapboxLayerIds);
+        layerOrderCoordinator.register(panelLayerId, handle.mapboxLayerIds);
 
         (node as ResourceNode).context = {
             ...((node as ResourceNode).context ?? {}),
@@ -112,7 +114,7 @@ export default function VectorCheck({ node, context }: VectorCheckProps) {
                     pageContext.current.displayHandle?.remove()
                     pageContext.current.displayHandle = null
                     pageContext.current.checkedVectorIds.clear()
-                    layerOrderCoordinator.unregister(node.nodeInfo)
+                    layerOrderCoordinator.unregister(panelLayerId)
                 }
             },
         }
@@ -133,7 +135,7 @@ export default function VectorCheck({ node, context }: VectorCheckProps) {
                     pageContext.current.displayHandle?.remove()
                     pageContext.current.displayHandle = null
                     pageContext.current.checkedVectorIds.clear()
-                    layerOrderCoordinator.unregister(node.nodeInfo)
+                    layerOrderCoordinator.unregister(panelLayerId)
                 }
             },
         }
