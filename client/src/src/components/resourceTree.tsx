@@ -328,6 +328,7 @@ const NodeRenderer = ({
         if (!isFolder) {
             const payload = {
                 nodeKey: node.key,
+                nodeName: node.name,
                 nodeInfo: node.nodeInfo,
                 nodeLockId: (node as ResourceNode).lockId || null,
                 templateName: node.template_name,

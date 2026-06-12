@@ -91,6 +91,13 @@ interface FeaturePickResource {
 type PatchSelectMode = 'brush' | 'box'
 type TopologyOperationType = 'subdivide' | 'merge' | 'delete' | 'recover' | null
 
+const getDraggedNodeDisplayName = (payload: { nodeKey?: string, nodeName?: string | null }) => {
+    const nodeName = payload.nodeName?.trim()
+    if (nodeName) return nodeName
+
+    return payload.nodeKey?.split('.').filter(Boolean).pop() || 'Vector'
+}
+
 const topologyTips = [
     { tip: 'Hold Shift to select/deselect grids with Brush or Box.' },
     { tip: 'Subdivide splits grids; Merge combines.' },
@@ -496,6 +503,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         try {
             const payload = JSON.parse(raw) as {
                 nodeKey: string
+                nodeName?: string
                 nodeInfo: string
                 nodeLockId: string | null
                 templateName: string
@@ -520,15 +528,16 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                 kind: 'vector',
                 nodeKey: dragNodeKey,
                 nodeInfo: dragNodeInfo,
-                name: payload.sourceTreeTitle || 'Vector'
+                name: getDraggedNodeDisplayName(payload)
             }
 
             store.get<{ on: Function; off: Function }>('isLoading')!.on()
 
             const vectorData = await api.vector.getVector(dragNodeInfo, dragNodeLockId || '')
             pageContext.current.vectorData = vectorData.data;
+            pageContext.current.featuePickResource.name = vectorData.data?.name || pageContext.current.featuePickResource.name;
 
-            (pageContext.current.vectorData.feature_json as GeoJSON.FeatureCollection).features.forEach(feature => pageContext.current.selectedVectorFeatureIds.add(feature.id as string))
+            (pageContext.current.vectorData.feature_json as GeoJSON.FeatureCollection).features.forEach((feature: GeoJSON.Feature) => pageContext.current.selectedVectorFeatureIds.add(feature.id as string))
 
             try {
                 if (drawInstance) {
