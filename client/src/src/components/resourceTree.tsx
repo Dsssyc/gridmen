@@ -481,7 +481,7 @@ const NodeRenderer = ({
                     <div
                         ref={nodeRef}
                         className={cn(
-                            'group relative flex h-6 w-full cursor-pointer select-none items-center overflow-hidden text-sm',
+                            'group relative flex h-6 w-full cursor-pointer select-none items-center text-sm',
                             isSelected ? 'text-white' : 'text-gray-300',
                         )}
                         data-node-type={isFolder ? 'folder' : 'file'}
@@ -495,7 +495,7 @@ const NodeRenderer = ({
                     >
                         <div
                             className={cn(
-                                'pointer-events-none absolute inset-y-0 left-0 right-0',
+                                'pointer-events-none absolute inset-y-0 -left-2 -right-2',
                                 isFolder && isDragOver
                                     ? 'bg-gray-500/50'
                                     : isSelected
@@ -759,7 +759,7 @@ const TreeRenderer = ({ title, resourceTree, triggerFocus, onExplorerNodeSelect 
                     </Button>
                 </div>
             </div>
-            <div className='flex-1 min-h-0 overflow-y-auto scrollbar-hover'>
+            <div className='flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-hide'>
                 {showNewResourceInfo && resourceTree && !resourceTree.selectedNode && (
                     <div style={{ paddingLeft: `0px` }}>
                         <CreationBar resourceTree={resourceTree} onCreated={() => setShowNewResourceInfo(false)} onCancel={() => setShowNewResourceInfo(false)} />
