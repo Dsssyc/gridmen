@@ -88,6 +88,7 @@ interface FeaturePickResource {
     name: string
 }
 
+type PatchSelectMode = 'brush' | 'box'
 type TopologyOperationType = 'subdivide' | 'merge' | 'delete' | 'recover' | null
 
 const topologyTips = [
@@ -162,10 +163,17 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
     const [selectAllDialogOpen, setSelectAllDialogOpen] = useState(false)
     const [deleteSelectDialogOpen, setDeleteSelectDialogOpen] = useState(false)
     const [pickingTab, setPickingTab] = useState<boolean>(true)
-    const [selectTab, setSelectTab] = useState<'brush' | 'box'>('brush')
+    const [selectTab, setSelectTab] = useState<PatchSelectMode>('brush')
     const [activeTopologyOperation, setActiveTopologyOperation] = useState<TopologyOperationType>(null)
 
     const [, triggerRepaint] = useReducer(x => x + 1, 0)
+
+    const setPatchSelectMode = useCallback((mode: PatchSelectMode) => {
+        if (checkSwitchOn) return
+
+        pageContext.current!.editingState.select = mode
+        setSelectTab(mode)
+    }, [checkSwitchOn])
 
     useEffect(() => {
         loadContext()
@@ -609,15 +617,17 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         const handleKeyDown = (event: KeyboardEvent) => {
             if (checkSwitchOn) return
             if (event.ctrlKey || event.metaKey) {
-                if (event.key === 'P' || event.key === 'p') {
+                const key = event.key.toLowerCase()
+
+                if (key === 'p') {
                     event.preventDefault()
                     setPickingTab(true)
                 }
-                if (event.key === 'U' || event.key === 'u') {
+                if (key === 'u') {
                     event.preventDefault()
                     setPickingTab(false)
                 }
-                if (event.key === 'A' || event.key === 'a') {
+                if (key === 'a') {
                     event.preventDefault()
                     if (highSpeedMode) {
                         handleConfirmSelectAll()
@@ -625,7 +635,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                         setSelectAllDialogOpen(true)
                     }
                 }
-                if (event.key === 'C' || event.key === 'c') {
+                if (key === 'c') {
                     event.preventDefault()
                     if (highSpeedMode) {
                         handleConfirmDeleteSelect()
@@ -633,17 +643,15 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                         setDeleteSelectDialogOpen(true)
                     }
                 }
-                if (event.key === '1') {
+                if (event.key === '1' || event.code === 'Digit1') {
                     event.preventDefault()
-                    pageContext.current!.editingState.select = 'brush'
-                    setSelectTab('brush')
+                    setPatchSelectMode('brush')
                 }
-                if (event.key === '2') {
+                if (event.key === '2' || event.code === 'Digit2') {
                     event.preventDefault()
-                    pageContext.current!.editingState.select = 'box'
-                    setSelectTab('box')
+                    setPatchSelectMode('box')
                 }
-                if (event.key === 'S' || event.key === 's') {
+                if (key === 's') {
                     event.preventDefault()
                     if (highSpeedMode) {
                         store.get<{ on: Function; off: Function }>('isLoading')!.on()
@@ -652,7 +660,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                         setActiveTopologyOperation('subdivide')
                     }
                 }
-                if (event.key === 'M' || event.key === 'm') {
+                if (key === 'm') {
                     event.preventDefault()
                     if (highSpeedMode) {
                         store.get<{ on: Function; off: Function }>('isLoading')!.on()
@@ -661,7 +669,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                         setActiveTopologyOperation('merge')
                     }
                 }
-                if (event.key === 'D' || event.key === 'd') {
+                if (key === 'd') {
                     event.preventDefault()
                     if (highSpeedMode) {
                         pageContext.current.topologyLayer!.executeDeleteCells()
@@ -669,7 +677,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                         setActiveTopologyOperation('delete')
                     }
                 }
-                if (event.key === 'R' || event.key === 'r') {
+                if (key === 'r') {
                     event.preventDefault()
                     if (highSpeedMode) {
                         pageContext.current.topologyLayer!.executeRecoverCells()
@@ -680,19 +688,25 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             }
         }
 
-        window.addEventListener('keydown', handleKeyDown)
+        window.addEventListener('keydown', handleKeyDown, true)
 
         return () => {
-            window.removeEventListener('keydown', handleKeyDown)
+            window.removeEventListener('keydown', handleKeyDown, true)
         }
     }, [
         setPickingTab,
         handleConfirmDeleteSelect,
         handleConfirmSelectAll,
-        selectTab,
+        setPatchSelectMode,
         checkSwitchOn,
         highSpeedMode
     ])
+
+    useEffect(() => {
+        return window.electronAPI?.onPatchSelectModeShortcut?.((mode) => {
+            setPatchSelectMode(mode)
+        })
+    }, [setPatchSelectMode])
 
     const toggleCheckSwitch = () => {
         if (checkSwitchOn === pageContext.current!.isChecking) {
@@ -1145,7 +1159,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                         <button
                                             className={` flex-1 py-2 px-3 rounded-md transition-colors duration-200 text-white flex flex-col gap-0.5 text-sm justify-center items-center ${checkSwitchOn ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} 
                                                             ${selectTab === 'brush' ? 'bg-[#FF8F2E] ' : ' hover:bg-gray-500'}`}
-                                            onClick={() => { !checkSwitchOn && setSelectTab('brush') }}
+                                            onClick={() => { setPatchSelectMode('brush') }}
                                             disabled={checkSwitchOn}
                                         >
                                             <div className='flex flex-row gap-1 items-center'>
@@ -1153,13 +1167,13 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                                 Brush
                                             </div>
                                             <div className={`text-xs ${selectTab === 'brush' && 'text-white'} `}>
-                                                [ Ctrl+1 ]
+                                                [ Ctrl/Cmd+1 ]
                                             </div>
                                         </button>
                                         <button
                                             className={`flex-1 py-2 px-3 rounded-md transition-colors duration-200 text-white flex flex-col gap-0.5 text-sm justify-center items-center ${checkSwitchOn ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} 
                                                             ${selectTab === 'box' ? 'bg-[#FF8F2E] ' : ' hover:bg-gray-500'}`}
-                                            onClick={() => { !checkSwitchOn && setSelectTab('box') }}
+                                            onClick={() => { setPatchSelectMode('box') }}
                                             disabled={checkSwitchOn}
                                         >
                                             <div className='flex flex-row gap-1 items-center'>
@@ -1167,7 +1181,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                                                 Box
                                             </div>
                                             <div className={`text-xs ${selectTab === 'box' && 'text-white'} `}>
-                                                [ Ctrl+2 ]
+                                                [ Ctrl/Cmd+2 ]
                                             </div>
                                         </button>
                                     </div>
