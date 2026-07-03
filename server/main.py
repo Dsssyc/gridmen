@@ -25,4 +25,9 @@ if __name__ == '__main__':
         venv_path = sys.prefix
         os.environ['PROJ_LIB'] = os.path.join(venv_path, 'Lib', 'site-packages', 'osgeo', 'data', 'proj')
 
-    uvicorn.run('src.gridmen_backend.main:app', host='0.0.0.0', port=settings.SERVER_PORT, reload=settings.DEBUG)
+    uvicorn.run(
+        'src.gridmen_backend.main:app',
+        host=settings.SERVER_HOST,
+        port=settings.SERVER_PORT,
+        reload=settings.DEBUG,
+    )

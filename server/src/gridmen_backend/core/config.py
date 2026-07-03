@@ -10,6 +10,7 @@ ROOT_DIR = Path(__file__).parent.parent.parent.parent
 class Settings(BaseSettings):
     # Server configuration
     DEBUG: bool = True
+    SERVER_HOST: str = '0.0.0.0'
     SERVER_PORT: int = 8000
     APP_VERSION: str = '1.0.0'
     APP_NAME: str = 'Gridmen Calculation Backend'

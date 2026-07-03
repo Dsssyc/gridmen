@@ -49,7 +49,7 @@ For a server process, set `DEBUG=production` so Uvicorn does not run with the
 development reloader:
 
 ```bash
-DEBUG=production SERVER_PORT=18084 npm run start:web
+DEBUG=production SERVER_HOST=127.0.0.1 SERVER_PORT=18084 npm run start:web
 ```
 
 ## Nginx Shape
