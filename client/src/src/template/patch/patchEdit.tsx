@@ -46,7 +46,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import TopologyLayer from '@/views/mapView/topology/TopologyLayer'
 import { convertBoundsCoordinates, waitForDrawInstanceLoad, waitForMapLoad } from '@/utils/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { ensureTopologyLayerInitialized, getOrCreatePerPatchTopology } from '@/views/mapView/topology/topologyLayerManager'
+import { ensureTopologyLayerInitialized, getOrCreatePerPatchTopology, removePerPatchTopology } from '@/views/mapView/topology/topologyLayerManager'
 import { layerOrderCoordinator } from '@/views/mapView/layerOrderCoordinator'
 import { startPatchRenderBenchmark } from './benchmark/renderBenchmarkRunner'
 import { startPatchEditLatencyBenchmark } from './benchmark/editLatencyBenchmarkRunner'
@@ -172,12 +172,34 @@ const normalizePageContext = (context: Partial<PageContext> | undefined): PageCo
     return {
         ...initialContext,
         ...context,
+        patchCore: null,
+        topologyLayer: null,
+        benchmarkCleanup: null,
+        perPatchCLGId: null,
+        vectorLockId: null,
+        featuePickResource: context.featuePickResource
+            ? { ...context.featuePickResource, lockId: null }
+            : null,
         editingState,
-        selectedVectorFeatureIds: context.selectedVectorFeatureIds instanceof Set
-            ? context.selectedVectorFeatureIds
-            : initialContext.selectedVectorFeatureIds,
+        selectedVectorFeatureIds: initialContext.selectedVectorFeatureIds,
     }
 }
+
+const createStoredPageContext = (context: PageContext): Partial<PageContext> => ({
+    patch: context.patch,
+    isChecking: context.isChecking,
+    editingState: { ...context.editingState },
+    featuePickResource: context.featuePickResource
+        ? { ...context.featuePickResource, lockId: null }
+        : null,
+    patchCore: null,
+    topologyLayer: null,
+    vectorLockId: null,
+    vectorData: null,
+    selectedVectorFeatureIds: new Set<string>(),
+    perPatchCLGId: null,
+    benchmarkCleanup: null,
+})
 
 export default function PatchEdit({ node, context }: PatchEditProps) {
     const mapContext = context as MapViewContext
@@ -254,6 +276,21 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         if (options.repaint ?? true) {
             triggerRepaint()
         }
+    }
+
+    const disposePatchRuntime = () => {
+        clearUploadedFeaturePreview({ repaint: false })
+
+        pageContext.current.benchmarkCleanup?.()
+        pageContext.current.benchmarkCleanup = null
+
+        pageContext.current.patchCore?.remove()
+        pageContext.current.patchCore = null
+        pageContext.current.topologyLayer = null
+        pageContext.current.perPatchCLGId = null
+
+        removePerPatchTopology(map, node.nodeInfo)
+        layerOrderCoordinator.unregister(node.nodeInfo)
     }
 
     useEffect(() => {
@@ -343,23 +380,11 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         });
 
         (node as ResourceNode).context = {
-            ...((node as ResourceNode).context ?? {}),
+            ...createStoredPageContext(pageContext.current),
             topologyLayerId,
             __cleanup: {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
-                topology: () => {
-                    const id = pageContext.current.perPatchCLGId
-                    if (id && map.getLayer(id)) map.removeLayer(id)
-                    pageContext.current.perPatchCLGId = null
-
-                    clearUploadedFeaturePreview({ repaint: false })
-
-                    pageContext.current.benchmarkCleanup?.()
-                    pageContext.current.benchmarkCleanup = null
-                    pageContext.current.topologyLayer = null
-                    pageContext.current.patchCore = null
-                    layerOrderCoordinator.unregister(node.nodeInfo)
-                },
+                topology: disposePatchRuntime,
             },
         }
 
@@ -370,28 +395,14 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
         console.log('unloadContext called')
 
-        clearUploadedFeaturePreview({ repaint: false })
-        pageContext.current.benchmarkCleanup?.()
-        pageContext.current.benchmarkCleanup = null;
+        disposePatchRuntime();
 
         (node as ResourceNode).context = {
-            ...pageContext.current,
+            ...createStoredPageContext(pageContext.current),
             topologyLayerId,
             __cleanup: {
                 ...(((node as ResourceNode).context as any)?.__cleanup ?? {}),
-                topology: () => {
-                    const id = pageContext.current.perPatchCLGId
-                    if (id && map.getLayer(id)) map.removeLayer(id)
-                    pageContext.current.perPatchCLGId = null
-
-                    clearUploadedFeaturePreview({ repaint: false })
-
-                    pageContext.current.benchmarkCleanup?.()
-                    pageContext.current.benchmarkCleanup = null
-                    pageContext.current.topologyLayer = null
-                    pageContext.current.patchCore = null
-                    layerOrderCoordinator.unregister(node.nodeInfo)
-                },
+                topology: disposePatchRuntime,
             },
         }
 
@@ -584,6 +595,8 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         e.preventDefault()
         e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50')
         const raw = e.dataTransfer.getData('application/gridmen-node') || e.dataTransfer.getData('text/plain')
+        let loadingStarted = false
+        let failureMessage = 'Invalid drag data'
 
         try {
             const payload = JSON.parse(raw) as {
@@ -616,6 +629,8 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
                 name: getDraggedNodeDisplayName(payload)
             }
 
+            failureMessage = 'Failed to load vector data'
+            loadingStarted = true
             store.get<{ on: Function; off: Function }>('isLoading')!.on()
 
             const vectorData = await api.vector.getVector(dragNodeInfo, vectorLockId)
@@ -630,14 +645,16 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
             } catch (renderErr) {
                 console.warn('Failed to render dragged vector on map:', renderErr)
             }
-            store.get<{ on: Function; off: Function }>('isLoading')!.off()
 
         } catch (error) {
-            console.error('Invalid drag payload:', error)
-            toast.error('Invalid drag data')
+            console.error(failureMessage, error)
+            toast.error(failureMessage)
+        } finally {
+            if (loadingStarted) {
+                store.get<{ on: Function; off: Function }>('isLoading')!.off()
+            }
+            triggerRepaint()
         }
-
-        triggerRepaint()
     }
 
     const handleClearUploadedFeature = () => {
@@ -660,12 +677,14 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
             if (pageContext.current.featuePickResource.kind === 'vector') {
                 const vectorLockId = pageContext.current.featuePickResource.lockId ?? pageContext.current.vectorLockId
-                pageContext.current.topologyLayer!.executePickCellsByVectorNode(pageContext.current.featuePickResource.nodeInfo, vectorLockId, pickingTab)
+                await pageContext.current.topologyLayer!.executePickCellsByVectorNode(pageContext.current.featuePickResource.nodeInfo, vectorLockId, pickingTab)
                 return
             }
         } catch (error) {
             console.error('Error executing feature pick:', error)
             toast.error('Failed to execute feature pick')
+        } finally {
+            store.get<{ on: Function; off: Function }>('isLoading')!.off()
         }
     }, [pickingTab])
 

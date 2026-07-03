@@ -14,6 +14,9 @@ interface PatchLevelInfo {
     height: number
 }
 
+type CellInfoResult = { levels: Uint8Array, globalIds: Uint32Array }
+type CellInfoCallback = (error: Error | null, storageIds?: number[]) => void
+
 export interface PatchCoreOptions {
     maxCellNum?: number
     workerCount?: number
@@ -338,30 +341,43 @@ export default class PatchCore {
         })
     }
 
-    getCellInfoByFeature(path: string, callback?: Function) {
-        this.sendWorkerApiTask('getCellInfoByFeature', { path, nodeInfo: this.nodeInfo, lockId: this._lockId }, (_, cellInfos: { levels: Uint8Array, globalIds: Uint32Array }) => {
-            const { levels, globalIds } = cellInfos
-            const cellNum = levels.length
-            const storageIds: number[] = new Array(cellNum)
-            for (let i = 0; i < cellNum; i++) {
-                const id = this._key_storageId_dict.get(levels[i], globalIds[i])! // ! ensured because all activated cells are stored in the cache
-                storageIds[i] = id
+    getCellInfoByFeature(path: string, callback?: CellInfoCallback) {
+        this.sendWorkerApiTask('getCellInfoByFeature', { path, nodeInfo: this.nodeInfo, lockId: this._lockId }, (error, cellInfos: CellInfoResult | null) => {
+            if (error) {
+                callback?.(error)
+                return
             }
-            callback && callback(storageIds)
+            if (!cellInfos) {
+                callback?.(new Error('Missing cell info response'))
+                return
+            }
+            callback?.(null, this.getStorageIdsFromCellInfo(cellInfos))
         })
     }
 
-    getCellInfoByVectorNode(vectorNodeInfo: string, vectorNodeLockId: string | null, callback?: Function) {
-        this.sendWorkerApiTask('getCellInfoByVectorNode', { nodeInfo: this.nodeInfo, lockId: this._lockId, vectorNodeInfo, vectorNodeLockId }, (_, cellInfos: { levels: Uint8Array, globalIds: Uint32Array }) => {
-            const { levels, globalIds } = cellInfos
-            const cellNum = levels.length
-            const storageIds: number[] = new Array(cellNum)
-            for (let i = 0; i < cellNum; i++) {
-                const id = this._key_storageId_dict.get(levels[i], globalIds[i])! // ! ensured because all activated cells are stored in the cache
-                storageIds[i] = id
+    getCellInfoByVectorNode(vectorNodeInfo: string, vectorNodeLockId: string | null, callback?: CellInfoCallback) {
+        this.sendWorkerApiTask('getCellInfoByVectorNode', { nodeInfo: this.nodeInfo, lockId: this._lockId, vectorNodeInfo, vectorNodeLockId }, (error, cellInfos: CellInfoResult | null) => {
+            if (error) {
+                callback?.(error)
+                return
             }
-            callback && callback(storageIds)
+            if (!cellInfos) {
+                callback?.(new Error('Missing cell info response'))
+                return
+            }
+            callback?.(null, this.getStorageIdsFromCellInfo(cellInfos))
         })
+    }
+
+    private getStorageIdsFromCellInfo(cellInfos: CellInfoResult): number[] {
+        const { levels, globalIds } = cellInfos
+        const cellNum = levels.length
+        const storageIds: number[] = new Array(cellNum)
+        for (let i = 0; i < cellNum; i++) {
+            const id = this._key_storageId_dict.get(levels[i], globalIds[i])! // ! ensured because all activated cells are stored in the cache
+            storageIds[i] = id
+        }
+        return storageIds
     }
 
     getChildren(level: number, globalId: number): number[] | null {

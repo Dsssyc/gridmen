@@ -607,21 +607,67 @@ export default class TopologyLayer implements NHCustomLayerInterface {
         return this.patchCore.check(storageId)
     }
 
-    executePickCellsByFeature(path: string, addMode = true) {
+    executePickCellsByFeature(path: string, addMode = true): Promise<void> {
         this.startCallback()
-        this.patchCore.getCellInfoByFeature(path, (storageIds: number[]) => {
-            this._hit(storageIds, addMode)
-            this.endCallback()
-            store.get<{ on: Function; off: Function }>('isLoading')!.off()
+        return new Promise((resolve, reject) => {
+            let settled = false
+            const finish = (error?: unknown) => {
+                if (settled) return
+                settled = true
+                this.endCallback()
+                store.get<{ on: Function; off: Function }>('isLoading')!.off()
+                if (error) reject(error)
+                else resolve()
+            }
+
+            try {
+                this.patchCore.getCellInfoByFeature(path, (error, storageIds = []) => {
+                    if (error) {
+                        finish(error)
+                        return
+                    }
+                    try {
+                        this._hit(storageIds, addMode)
+                        finish()
+                    } catch (hitError) {
+                        finish(hitError)
+                    }
+                })
+            } catch (error) {
+                finish(error)
+            }
         })
     }
 
-    executePickCellsByVectorNode(vectorNodeInfo: string, vectorNodeLockId: string | null, addMode = true) {
+    executePickCellsByVectorNode(vectorNodeInfo: string, vectorNodeLockId: string | null, addMode = true): Promise<void> {
         this.startCallback()
-        this.patchCore.getCellInfoByVectorNode(vectorNodeInfo, vectorNodeLockId, (storageIds: number[]) => {
-            this._hit(storageIds, addMode)
-            this.endCallback()
-            store.get<{ on: Function; off: Function }>('isLoading')!.off()
+        return new Promise((resolve, reject) => {
+            let settled = false
+            const finish = (error?: unknown) => {
+                if (settled) return
+                settled = true
+                this.endCallback()
+                store.get<{ on: Function; off: Function }>('isLoading')!.off()
+                if (error) reject(error)
+                else resolve()
+            }
+
+            try {
+                this.patchCore.getCellInfoByVectorNode(vectorNodeInfo, vectorNodeLockId, (error, storageIds = []) => {
+                    if (error) {
+                        finish(error)
+                        return
+                    }
+                    try {
+                        this._hit(storageIds, addMode)
+                        finish()
+                    } catch (hitError) {
+                        finish(hitError)
+                    }
+                })
+            } catch (error) {
+                finish(error)
+            }
         })
     }
 

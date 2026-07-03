@@ -5,6 +5,11 @@ import { deserialize, serialize } from "../util/transfer";
 
 type ActorCallback = Callback<any> & { metadata?: any };
 
+const toError = (error: unknown): Error => {
+	if (error instanceof Error) return error;
+	return new Error(String(error));
+};
+
 class Actor {
 	name = "Actor";
 	scheduler = new Scheduler();
@@ -87,23 +92,33 @@ class Actor {
 			}
 		} else {
 			const buffers: Set<Transferable> = new Set();
+			let didRespond = false;
 			const done = task.hasCallback
 				? (err: Error | null, data?: unknown) => {
-					this.target.postMessage(
-						{
-							id,
-							type: "<response>",
-							error: err ? serialize(err) : null,
-							data: serialize(data, buffers),
-						},
-						buffers
-					);
+						if (didRespond) return;
+						didRespond = true;
+						this.target.postMessage(
+							{
+								id,
+								type: "<response>",
+								error: err ? serialize(err) : null,
+								data: serialize(data, buffers),
+							},
+							buffers
+						);
 				}
 				: (_: Error | null, __?: unknown) => { };
 
 			const params = deserialize(task.data);
 			if (this.parent[task.type]) {
-				this.parent[task.type](params, done);
+				try {
+					const result = this.parent[task.type](params, done);
+					if (result && typeof result.then === "function") {
+						result.catch((error: unknown) => done(toError(error)));
+					}
+				} catch (error) {
+					done(toError(error));
+				}
 			} else if (this.parent.getWorkerSource) {
 				// No action
 			} else {

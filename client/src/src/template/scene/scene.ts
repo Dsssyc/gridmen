@@ -35,14 +35,24 @@ export class ResourceNode implements IResourceNode {
 
     async close(): Promise<void> {
         const cleanup = (this.context as any)?.__cleanup as Record<string, (() => void)>
-        for (const dispose of Object.values(cleanup)) {
-            dispose?.()
+        for (const dispose of Object.values(cleanup ?? {})) {
+            try {
+                dispose?.()
+            } catch (error) {
+                console.warn('ResourceNode.close cleanup failed:', error)
+            }
         }
-        delete (this.context as any).__cleanup
+        if (this.context) delete (this.context as any).__cleanup
 
-        if (!this.isTemp) {
-            await unlinkNode(this.nodeInfo, this.lockId!)
-            this.lockId = null
+        const lockId = this.lockId
+        if (!this.isTemp && lockId) {
+            try {
+                await unlinkNode(this.nodeInfo, lockId)
+            } finally {
+                if (this.lockId === lockId) {
+                    this.lockId = null
+                }
+            }
         }
     }
 
