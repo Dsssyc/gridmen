@@ -291,12 +291,12 @@ def pick_cells_by_feature(request: PickByFeatureRequest):
             batches.append((batch_bboxes, batch_levels, batch_global_ids))
            
         process_func = partial(_process_picking_batch, geometry_wkts=geometry_wkts)
-        with mp.Pool(processes=min(n_cores, len(batches))) as pool:
-            results = pool.map(process_func, batches)
-            
-            for batch_levels, batch_global_ids in results:
-                picked_levels.extend(batch_levels)
-                picked_global_ids.extend(batch_global_ids)
+        # Avoid forking from the running API process here. The service already
+        # has active GDAL/noodle/RPC threads, and mp.Pool can deadlock after fork.
+        results = [process_func(batch) for batch in batches]
+        for batch_levels, batch_global_ids in results:
+            picked_levels.extend(batch_levels)
+            picked_global_ids.extend(batch_global_ids)
 
         if not picked_levels:
             logging.info(f'No activate cell centers found within the features from {file_or_vector_node_key}')
