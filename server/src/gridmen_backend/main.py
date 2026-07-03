@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'api'
 
 from .core import settings
 from .api import api_router
+from .web import PublicBasePathMiddleware, mount_static_frontend
 from pynoodle import NOODLE_INIT, NOODLE_TERMINATE
 
 logging.basicConfig(level=logging.INFO)
@@ -35,7 +36,12 @@ def create_app() -> FastAPI:
         allow_headers=settings.CORS_HEADERS,
         allow_credentials=settings.CORS_CREDENTIALS,
     )
+    app.add_middleware(
+        PublicBasePathMiddleware,
+        public_base_path=settings.WEB_PUBLIC_BASE_PATH,
+    )
     app.include_router(api_router)
+    mount_static_frontend(app, settings.WEB_STATIC_DIR)
     return app
 
 app = create_app()

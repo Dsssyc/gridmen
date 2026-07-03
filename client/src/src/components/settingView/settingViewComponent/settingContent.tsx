@@ -55,7 +55,7 @@ export default function SettingContent({ activeCategory }: SettingContentProps) 
     const mapboxAccessToken = getMapboxAccessToken(savedMapboxAccessToken)
     const trimmedApiBaseUrlOverride = apiBaseUrlOverride.trim()
     const apiBaseUrlError = trimmedApiBaseUrlOverride && !normalizeApiBaseUrl(trimmedApiBaseUrlOverride)
-        ? `Use an http:// or https:// URL, for example ${DEFAULT_API_BASE_URL}.`
+        ? `Use an http://, https://, or same-origin path such as /gridmen.`
         : null
     const effectiveApiBaseUrl = getEffectiveApiBaseUrl(apiBaseUrlOverride)
     const apiBaseUrlSource = getApiBaseUrlSource(apiBaseUrlOverride)

@@ -7,6 +7,8 @@
     "doctor": "node scripts/doctor.mjs",
     "setup": "node scripts/setup.mjs",
     "start": "node scripts/start.mjs",
+    "build:web": "node scripts/build-web-deploy.mjs",
+    "start:web": "node scripts/start-web-local.mjs",
     "start:client": "cd client && npm start",
     "dev:web": "cd client/src && npm run dev",
     "start:server": "cd server && uv run main.py"

@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     SERVER_PORT: int = 8000
     APP_VERSION: str = '1.0.0'
     APP_NAME: str = 'Gridmen Calculation Backend'
+
+    # Web frontend deployment
+    WEB_PUBLIC_BASE_PATH: str = '/gridmen'
+    WEB_STATIC_DIR: str = str(ROOT_DIR.parent / 'templates')
     
     # Proxy configuration
     HTTP_PROXY: str = ''

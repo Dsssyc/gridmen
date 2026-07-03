@@ -5,6 +5,7 @@ import SettingView from "./settingView/settingView"
 import { ICON_REGISTRY } from "@/registry/iconRegistry"
 import { IResourceNode } from "@/template/scene/iscene"
 import IconBar, { IconBarClickHandlers } from "./iconBar"
+import { getRouterBasename } from "@/utils/deployPaths"
 import MapViewComponent from "@/views/mapView/mapViewComponent"
 import { ResourceNode, ResourceTree } from "@/template/scene/scene"
 import TableViewComponent from "@/views/tableView/tableViewComponent"
@@ -14,9 +15,10 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavig
 import Hello from "./helloPage/hello"
 
 export default function Framework() {
+    const routerBasename = getRouterBasename(import.meta.env.BASE_URL)
 
     return (
-        <Router>
+        <Router basename={routerBasename}>
             <FrameworkShell />
         </Router>
     )

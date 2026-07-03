@@ -11,6 +11,7 @@ import HitBuffer from './hitBuffer'
 import CustomLayerGroup from './customLayerGroup'
 import { NHCustomLayerInterface } from './interfaces'
 import store from '@/store/store'
+import { withPublicBasePath } from '@/utils/deployPaths'
 
 let CHECK_ON_EVENT: Function
 let CHECK_OFF_EVENT: Function
@@ -240,9 +241,9 @@ export default class GridLayer implements NHCustomLayerInterface {
 
         // Create shader
         await Promise.all([
-            gll.createShader(gl, '/shaders/patch/picking.glsl').then(shader => { this._pickingShader = shader }),
-            gll.createShader(gl, '/shaders/patch/cellLine.glsl').then(shader => { this._cellLineShader = shader }),
-            gll.createShader(gl, '/shaders/patch/cellMesh.glsl').then(shader => { this._cellMeshShader = shader }),
+            gll.createShader(gl, withPublicBasePath('/shaders/patch/picking.glsl')).then(shader => { this._pickingShader = shader }),
+            gll.createShader(gl, withPublicBasePath('/shaders/patch/cellLine.glsl')).then(shader => { this._cellLineShader = shader }),
+            gll.createShader(gl, withPublicBasePath('/shaders/patch/cellMesh.glsl')).then(shader => { this._cellMeshShader = shader }),
         ])
 
         // Set static uniform in shaders

@@ -10,6 +10,11 @@ export function normalizeApiBaseUrl(value: string | null | undefined): string | 
     const raw = String(value ?? '').trim()
     if (!raw) return null
 
+    if (raw.startsWith('/') && !raw.startsWith('//')) {
+        const normalizedPath = raw.replace(/\/+$/, '')
+        return normalizedPath || '/'
+    }
+
     try {
         const url = new URL(raw)
         if (url.protocol !== 'http:' && url.protocol !== 'https:') return null

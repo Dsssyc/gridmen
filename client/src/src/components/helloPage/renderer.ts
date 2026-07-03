@@ -1,4 +1,5 @@
 import gll from '@/core/gl/glLib'
+import { withPublicBasePath } from '@/utils/deployPaths'
 
 const Max_Grid_Num_IN_One_Axis = 50
 
@@ -143,17 +144,17 @@ export default class HelloRenderer {
         this.handleCanvasResize()
 
         const gl = this.gl
-        this.fitShader = await gll.createShader(gl, '/shaders/hello/fit.glsl')
-        this.gridShader = await gll.createShader(gl, '/shaders/hello/grid.glsl')
-        this.particleShader = await gll.createShader(gl, '/shaders/hello/particle.glsl')
-        this.particleInitShader = await gll.createShader(gl, '/shaders/hello/particleInit.glsl')
-        this.particleUpdateShader = await gll.createShader(gl, '/shaders/hello/particleUpdate.glsl')
+        this.fitShader = await gll.createShader(gl, withPublicBasePath('/shaders/hello/fit.glsl'))
+        this.gridShader = await gll.createShader(gl, withPublicBasePath('/shaders/hello/grid.glsl'))
+        this.particleShader = await gll.createShader(gl, withPublicBasePath('/shaders/hello/particle.glsl'))
+        this.particleInitShader = await gll.createShader(gl, withPublicBasePath('/shaders/hello/particleInit.glsl'))
+        this.particleUpdateShader = await gll.createShader(gl, withPublicBasePath('/shaders/hello/particleUpdate.glsl'))
 
-        const helloBitmap = await gll.loadImage('/images/hello/hello.png')
+        const helloBitmap = await gll.loadImage(withPublicBasePath('/images/hello/hello.png'))
         this.helloImageTexture = gll.createTexture2D(gl, 0, helloBitmap.width, helloBitmap.height, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, helloBitmap)
         this.helloTexture = this.fitTexture(this.helloImageTexture)
 
-        const cooperationBitmap = await gll.loadImage('/images/hello/cooperation.png')
+        const cooperationBitmap = await gll.loadImage(withPublicBasePath('/images/hello/cooperation.png'))
         this.cooperationImageTexture = gll.createTexture2D(gl, 0, cooperationBitmap.width, cooperationBitmap.height, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, cooperationBitmap)
         this.cooperationTexture = this.fitTexture(this.cooperationImageTexture)
 
