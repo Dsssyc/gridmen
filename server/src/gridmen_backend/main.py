@@ -14,12 +14,13 @@ from .core import settings
 from .api import api_router
 from .web import PublicBasePathMiddleware, mount_static_frontend
 from pynoodle import NOODLE_INIT, NOODLE_TERMINATE
+from pynoodle.endpoints import router as noodle_router
 
 logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    NOODLE_INIT(app)
+    NOODLE_INIT()
     yield
     NOODLE_TERMINATE()
 
@@ -41,6 +42,7 @@ def create_app() -> FastAPI:
         public_base_path=settings.WEB_PUBLIC_BASE_PATH,
     )
     app.include_router(api_router)
+    app.include_router(noodle_router, prefix='/noodle', tags=['noodle'])
     mount_static_frontend(app, settings.WEB_STATIC_DIR)
     return app
 
