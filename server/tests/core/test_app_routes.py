@@ -18,4 +18,5 @@ def test_noodle_routes_precede_static_frontend_fallback(tmp_path, monkeypatch):
     with TestClient(app):
         route_paths = [getattr(route, "path", "") for route in app.routes]
 
+    assert route_paths.index("/noodle/node") < route_paths.index("/{frontend_path:path}")
     assert route_paths.index("/noodle/node/") < route_paths.index("/{frontend_path:path}")

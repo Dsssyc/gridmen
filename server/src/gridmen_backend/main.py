@@ -24,6 +24,28 @@ async def lifespan(app: FastAPI):
     yield
     NOODLE_TERMINATE()
 
+def include_noodle_routes(app: FastAPI) -> None:
+    app.include_router(noodle_router, prefix='/noodle', tags=['noodle'])
+
+    root_node_route = next(
+        (
+            route
+            for route in noodle_router.routes
+            if getattr(route, 'path', None) == '/node/' and 'GET' in getattr(route, 'methods', set())
+        ),
+        None,
+    )
+    if root_node_route is not None:
+        # Existing frontend builds call the root node endpoint without the trailing slash.
+        app.add_api_route(
+            '/noodle/node',
+            root_node_route.endpoint,
+            methods=['GET'],
+            response_model=getattr(root_node_route, 'response_model', None),
+            tags=['noodle'],
+            include_in_schema=False,
+        )
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
@@ -42,7 +64,7 @@ def create_app() -> FastAPI:
         public_base_path=settings.WEB_PUBLIC_BASE_PATH,
     )
     app.include_router(api_router)
-    app.include_router(noodle_router, prefix='/noodle', tags=['noodle'])
+    include_noodle_routes(app)
     mount_static_frontend(app, settings.WEB_STATIC_DIR)
     return app
 
