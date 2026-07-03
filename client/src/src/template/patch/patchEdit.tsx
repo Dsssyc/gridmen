@@ -278,7 +278,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         }
     }
 
-    const disposePatchRuntime = () => {
+    const suspendPatchRuntime = () => {
         clearUploadedFeaturePreview({ repaint: false })
 
         pageContext.current.benchmarkCleanup?.()
@@ -289,8 +289,12 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
         pageContext.current.topologyLayer = null
         pageContext.current.perPatchCLGId = null
 
-        removePerPatchTopology(map, node.nodeInfo)
         layerOrderCoordinator.unregister(node.nodeInfo)
+    }
+
+    const disposePatchRuntime = () => {
+        suspendPatchRuntime()
+        removePerPatchTopology(map, node.nodeInfo)
     }
 
     useEffect(() => {
@@ -395,7 +399,7 @@ export default function PatchEdit({ node, context }: PatchEditProps) {
 
         console.log('unloadContext called')
 
-        disposePatchRuntime();
+        suspendPatchRuntime();
 
         (node as ResourceNode).context = {
             ...createStoredPageContext(pageContext.current),
